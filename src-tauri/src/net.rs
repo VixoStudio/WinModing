@@ -19,6 +19,8 @@ const SEARCH_CACHE_TTL_SECS: i64 = 90;
 const MANIFEST_CACHE_TTL_SECS: i64 = 43_200;
 const API_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(6);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(4);
+const AUTH_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+const AUTH_REQUEST_TIMEOUT: Duration = Duration::from_secs(90);
 const SKIP_CONNECT_SECS: u64 = 10 * 60;
 const SKIP_UNAVAILABLE_SECS: u64 = 30 * 60;
 const MILLIDA_API: &str = "https://api.millida.net/v2";
@@ -46,21 +48,46 @@ impl HttpPool {
     }
 
     pub fn new() -> Result<Self, LauncherError> {
+        Self::with_timeouts(CONNECT_TIMEOUT, Duration::from_secs(120))
+    }
+
+    /// Longer timeouts + fresh proxy scan for Microsoft / Minecraft auth
+    /// (`api.minecraftservices.com` is often blocked on bare RU IPs).
+    pub fn for_auth() -> Result<Self, LauncherError> {
+        Self::with_timeouts(AUTH_CONNECT_TIMEOUT, AUTH_REQUEST_TIMEOUT)
+    }
+
+    fn with_timeouts(connect: Duration, request: Duration) -> Result<Self, LauncherError> {
+        let preferred = preferred_proxy_urls();
         let discovered = discover_proxy_urls();
-        let mut hops = vec![ClientHop::System];
-        for url in &discovered {
+        let mut hops = Vec::new();
+        // Settings / env proxy first — user explicitly chose the VPN mixed port.
+        for url in &preferred {
             hops.push(ClientHop::Proxy(url.clone()));
         }
-        if !discovered.is_empty() || env_proxy_is_set() {
-            hops.push(ClientHop::Direct);
+        hops.push(ClientHop::System);
+        for url in &discovered {
+            if preferred.iter().any(|p| p == url) {
+                continue;
+            }
+            hops.push(ClientHop::Proxy(url.clone()));
         }
-        let client = build_client(&hops[0])?;
+        // Always keep a direct hop last (TUN mode has no WinINet proxy).
+        hops.push(ClientHop::Direct);
+        let client = build_client(&hops[0], connect, request)?;
         let mut alts = Vec::new();
         for hop in hops.iter().skip(1) {
-            if let Ok(extra) = build_client(hop) {
+            if let Ok(extra) = build_client(hop, connect, request) {
                 alts.push(extra);
             }
         }
+        log::info!(
+            "http pool hops={} (connect={}ms) preferred={:?} proxies={:?}",
+            1 + alts.len(),
+            connect.as_millis(),
+            preferred,
+            discovered
+        );
         Ok(Self { client, alts })
     }
 
@@ -325,6 +352,11 @@ impl HttpPool {
     /// Rebuild clients so a VPN toggled after startup is picked up (WinINet / local SOCKS).
     pub fn refresh_proxies(&self) -> Result<Self, LauncherError> {
         Self::new()
+    }
+
+    /// Same as refresh, but with auth-friendly timeouts.
+    pub fn refresh_proxies_auth(&self) -> Result<Self, LauncherError> {
+        Self::for_auth()
     }
 
     pub async fn download_to(&self, url: &str, dest: &Path) -> Result<(), LauncherError> {
@@ -669,14 +701,18 @@ fn is_auth_hard_fail(err: &LauncherError) -> bool {
     }
 }
 
-fn build_client(hop: &ClientHop) -> Result<reqwest::Client, LauncherError> {
+fn build_client(
+    hop: &ClientHop,
+    connect: Duration,
+    request: Duration,
+) -> Result<reqwest::Client, LauncherError> {
     let mut builder = reqwest::Client::builder()
         .pool_max_idle_per_host(16)
         .pool_idle_timeout(Duration::from_secs(90))
         .tcp_keepalive(Duration::from_secs(20))
         .tcp_nodelay(true)
-        .connect_timeout(CONNECT_TIMEOUT)
-        .timeout(Duration::from_secs(120))
+        .connect_timeout(connect)
+        .timeout(request)
         .user_agent(APP_USER_AGENT)
         .gzip(true)
         .http1_only();
@@ -791,11 +827,33 @@ fn env_proxy_is_set() -> bool {
         })
 }
 
-fn discover_proxy_urls() -> Vec<String> {
-    if env_proxy_is_set() {
-        return Vec::new();
-    }
+fn preferred_proxy_urls() -> Vec<String> {
     let mut urls = Vec::new();
+    if let Some(custom) = read_settings_proxy() {
+        push_unique(&mut urls, prefer_socks5h(&custom));
+    }
+    for name in [
+        "ALL_PROXY",
+        "all_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+    ] {
+        if let Ok(value) = std::env::var(name) {
+            let value = value.trim();
+            if !value.is_empty() {
+                push_unique(&mut urls, prefer_socks5h(value));
+                break;
+            }
+        }
+    }
+    urls
+}
+
+fn discover_proxy_urls() -> Vec<String> {
+    let mut urls = preferred_proxy_urls();
+
     if let Some(url) = windows_proxy_url() {
         let http = prefer_socks5h(&url);
         if let Some(sibling) = v2ray_socks_sibling(&http) {
@@ -805,17 +863,48 @@ fn discover_proxy_urls() -> Vec<String> {
         }
         push_unique(&mut urls, http);
     }
+
+    // Common mixed/SOCKS ports: v2rayN, Clash/Meta, Hiddify, Nekoray, sing-box.
     for (url, addr) in [
         ("socks5h://127.0.0.1:10808", "127.0.0.1:10808"),
         ("http://127.0.0.1:10809", "127.0.0.1:10809"),
+        ("socks5h://127.0.0.1:1080", "127.0.0.1:1080"),
+        ("http://127.0.0.1:1080", "127.0.0.1:1080"),
         ("http://127.0.0.1:7890", "127.0.0.1:7890"),
         ("socks5h://127.0.0.1:7891", "127.0.0.1:7891"),
+        ("http://127.0.0.1:7897", "127.0.0.1:7897"),
+        ("http://127.0.0.1:12334", "127.0.0.1:12334"),
+        ("socks5h://127.0.0.1:12334", "127.0.0.1:12334"),
+        ("http://127.0.0.1:12335", "127.0.0.1:12335"),
+        ("socks5h://127.0.0.1:2080", "127.0.0.1:2080"),
+        ("http://127.0.0.1:2080", "127.0.0.1:2080"),
+        ("socks5h://127.0.0.1:2081", "127.0.0.1:2081"),
+        ("http://127.0.0.1:20171", "127.0.0.1:20171"),
+        ("socks5h://127.0.0.1:20170", "127.0.0.1:20170"),
+        ("http://127.0.0.1:6152", "127.0.0.1:6152"),
+        ("socks5h://127.0.0.1:6153", "127.0.0.1:6153"),
     ] {
         if local_port_open(addr) {
             push_unique(&mut urls, url.to_string());
         }
     }
     urls
+}
+
+fn read_settings_proxy() -> Option<String> {
+    let root = dirs::data_local_dir()?.join("WinModing");
+    let path = root.join("winmoding.settings.json");
+    let body = std::fs::read_to_string(path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&body).ok()?;
+    let raw = value
+        .get("networkProxy")
+        .or_else(|| value.get("network_proxy"))
+        .and_then(|v| v.as_str())?
+        .trim();
+    if raw.is_empty() {
+        return None;
+    }
+    Some(normalize_proxy_url(raw))
 }
 
 fn prefer_socks5h(url: &str) -> String {

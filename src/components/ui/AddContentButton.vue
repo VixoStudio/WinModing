@@ -17,10 +17,13 @@ const props = defineProps({
 const router = useRouter()
 
 const handleAddContentFromFile = async () => {
-  const newProject = await open({ multiple: true })
+  const newProject = await open({
+    multiple: true,
+    filters: [{ name: 'Minecraft content', extensions: ['jar', 'zip', 'litemod'] }],
+  })
   if (!newProject) return
-
-  for (const project of newProject) {
+  const files = Array.isArray(newProject) ? newProject : [newProject]
+  for (const project of files) {
     await add_project_from_path(props.instance.path, project.path ?? project).catch(handleError)
   }
 }

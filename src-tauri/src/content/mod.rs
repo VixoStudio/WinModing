@@ -1316,6 +1316,62 @@ pub async fn install_from_version(
     .await
 }
 
+/// Copy a local `.jar` / `.zip` into the instance content folder and index it.
+pub fn install_from_path(
+    paths: &AppPaths,
+    instance_id: &str,
+    file_path: &str,
+    project_type: &str,
+) -> Result<Vec<String>, LauncherError> {
+    if !instance_id_is_safe(instance_id) {
+        return Err(LauncherError::Instance {
+            id: instance_id.to_string(),
+            reason: "unsafe instance id".into(),
+        });
+    }
+    let src = Path::new(file_path);
+    if !src.is_file() {
+        return Err(LauncherError::Message(format!(
+            "file not found: {file_path}"
+        )));
+    }
+    let file_name = src
+        .file_name()
+        .map(|v| v.to_string_lossy().into_owned())
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| LauncherError::Message("bad file name".into()))?;
+    let lower = file_name.to_ascii_lowercase();
+    if !(lower.ends_with(".jar") || lower.ends_with(".zip") || lower.ends_with(".litemod")) {
+        return Err(LauncherError::Message(format!(
+            "unsupported content file: {file_name}"
+        )));
+    }
+    let folder = folder_for(project_type);
+    let root = paths.instance_dir(instance_id);
+    let dest_dir = root.join(folder);
+    std::fs::create_dir_all(&dest_dir).map_err(|err| io_at(&dest_dir, err))?;
+    let dest = dest_dir.join(&file_name);
+    if src != dest.as_path() {
+        std::fs::copy(src, &dest).map_err(|err| io_at(&dest, err))?;
+    }
+    let stem = base_mod_name(&file_name);
+    let project_id = if stem.is_empty() {
+        format!("local:{file_name}")
+    } else {
+        format!("local:{stem}")
+    };
+    remember(
+        &root,
+        &project_id,
+        "local",
+        folder,
+        &[file_name.clone()],
+        None,
+        None,
+    )?;
+    Ok(vec![file_name])
+}
+
 pub(crate) async fn install_curseforge_flexible(
     http: &HttpPool,
     paths: &AppPaths,
@@ -1493,12 +1549,27 @@ pub async fn catalog_versions(
             .collect());
     }
     let _ = cache;
-    let url = format!(
-        "{MODRINTH_API}/project/{}/version?game_versions={}&loaders={}",
-        urlencoding::encode(id),
-        urlencoding::encode(&serde_json::json!([game_version]).to_string()),
-        urlencoding::encode(&serde_json::json!([loader]).to_string()),
+    let mut url = format!(
+        "{MODRINTH_API}/project/{}/version",
+        urlencoding::encode(id)
     );
+    let mut qs = Vec::new();
+    if !game_version.trim().is_empty() {
+        qs.push(format!(
+            "game_versions={}",
+            urlencoding::encode(&serde_json::json!([game_version]).to_string())
+        ));
+    }
+    if !loader.trim().is_empty() && loader != "vanilla" {
+        qs.push(format!(
+            "loaders={}",
+            urlencoding::encode(&serde_json::json!([loader]).to_string())
+        ));
+    }
+    if !qs.is_empty() {
+        url.push('?');
+        url.push_str(&qs.join("&"));
+    }
     http.get_json(&url, &[]).await
 }
 

@@ -917,6 +917,21 @@ pub fn remove_content(
 }
 
 #[tauri::command]
+pub fn install_content_from_path(
+    state: State<'_, AppState>,
+    instance_id: String,
+    path: String,
+    project_type: Option<String>,
+) -> Result<Vec<String>, LauncherError> {
+    crate::content::install_from_path(
+        &state.paths,
+        &instance_id,
+        &path,
+        project_type.as_deref().unwrap_or("mod"),
+    )
+}
+
+#[tauri::command]
 pub fn toggle_disable_content(
     state: State<'_, AppState>,
     instance_id: String,

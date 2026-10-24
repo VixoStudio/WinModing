@@ -288,8 +288,11 @@ pub async fn login_microsoft_device(
     };
 
     let _ = app.emit("msa-device-code", serde_json::json!({ "done": true }));
-    // Prefer a freshly discovered proxy set for Xbox → Minecraft (often blocked on RU IPs).
-    let routed = http.refresh_proxies().unwrap_or_else(|_| http.clone());
+    // Fresh proxy scan + longer timeouts for Xbox → Minecraft (often blocked on RU IPs).
+    let routed = http
+        .refresh_proxies_auth()
+        .or_else(|_| HttpPool::for_auth())
+        .unwrap_or_else(|_| http.clone());
     exchange_xbox(&routed, token, true).await
 }
 
@@ -335,8 +338,12 @@ pub async fn refresh_microsoft(
         .get("expires_in")
         .and_then(|v| v.as_u64())
         .unwrap_or(3600);
+    let routed = http
+        .refresh_proxies_auth()
+        .or_else(|_| HttpPool::for_auth())
+        .unwrap_or_else(|_| http.clone());
     exchange_xbox(
-        http,
+        &routed,
         MsToken {
             access_token: access,
             refresh_token: refresh,
@@ -560,18 +567,19 @@ async fn exchange_xbox(
         Err(err) if is_connect_auth_err(&err) => {
             // VPN may have come up after launcher start — rediscover WinINet / local SOCKS.
             log::warn!("Xbox/Minecraft auth network failed, refreshing proxies: {err}");
-            let fresh = http.refresh_proxies().unwrap_or_else(|_| http.clone());
-            for attempt in 0..3u64 {
+            for attempt in 0..4u64 {
+                // Re-scan ports each try — user may flip System Proxy / TUN mid-login.
+                let fresh = HttpPool::for_auth().unwrap_or_else(|_| http.clone());
                 match exchange_xbox_once(&fresh, &token, prefix_d).await {
                     Ok(account) => return Ok(account),
-                    Err(retry_err) if is_connect_auth_err(&retry_err) && attempt < 2 => {
-                        tokio::time::sleep(std::time::Duration::from_millis(800 * (attempt + 1)))
+                    Err(retry_err) if is_connect_auth_err(&retry_err) && attempt < 3 => {
+                        tokio::time::sleep(std::time::Duration::from_millis(900 * (attempt + 1)))
                             .await;
                     }
                     Err(retry_err) => {
                         return Err(LauncherError::Auth {
                             reason: format!(
-                                "{retry_err}. Включи system proxy / TUN в VPN (v2rayN, Hiddify, Clash) и повтори — api.minecraftservices.com с RU IP часто режется"
+                                "{retry_err}. Включи System Proxy или TUN в VPN (v2rayN / Hiddify / Clash), в Настройках лаунчера укажи прокси вроде http://127.0.0.1:7890 или socks5h://127.0.0.1:10808 и повтори — api.minecraftservices.com с RU IP часто режется"
                             ),
                         });
                     }

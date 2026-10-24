@@ -127,7 +127,11 @@ async function install(instance) {
     return
   }
 
-  await installMod(instance.path, version.id).catch(handleError)
+  await installMod(instance.path, version.id, {
+    projectId: project.value.id || project.value.project_id,
+    source: project.value.source || 'modrinth',
+    project_type: project.value.project_type || 'mod',
+  }).catch(handleError)
   await installVersionDependencies(instance, version)
 
   instance.installedMod = true
@@ -187,7 +191,11 @@ const createInstance = async () => {
     icon.value,
   ).catch(handleError)
 
-  await installMod(id, versions.value[0].id).catch(handleError)
+  await installMod(id, versions.value[0].id, {
+    projectId: project.value.id || project.value.project_id,
+    source: project.value.source || 'modrinth',
+    project_type: project.value.project_type || 'mod',
+  }).catch(handleError)
 
   await router.push(`/instance/${encodeURIComponent(id)}/`)
 

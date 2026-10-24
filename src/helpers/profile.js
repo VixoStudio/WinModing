@@ -213,22 +213,46 @@ export async function update_project(path, _projectPath, extra = {}) {
 }
 
 export async function add_project_from_version(path, versionId, extra = {}) {
-  if (extra.projectId && String(extra.source || "").toLowerCase().includes("curse")) {
+  const source = String(extra.source || "").toLowerCase();
+  const projectId = extra.projectId || extra.project_id || extra.id;
+  const isCurse =
+    source.includes("curse") ||
+    (projectId &&
+      (/^\d+$/.test(String(projectId).replace(/^cf-/i, "")) ||
+        String(projectId).toLowerCase().startsWith("cf-")));
+  if (projectId && isCurse) {
     return invoke("install_content", {
       request: {
         instanceId: path,
-        projectId: extra.projectId,
-        versionId,
+        projectId: String(projectId),
+        versionId: versionId || null,
         source: "curseforge",
-        projectType: extra.project_type || "mod",
+        projectType: extra.project_type || extra.projectType || "mod",
+      },
+    });
+  }
+  if (projectId && source && !source.includes("modrinth") && versionId) {
+    return invoke("install_content", {
+      request: {
+        instanceId: path,
+        projectId: String(projectId),
+        versionId,
+        source: source || "modrinth",
+        projectType: extra.project_type || extra.projectType || "mod",
       },
     });
   }
   return invoke("add_project_from_version", { instanceId: path, versionId });
 }
 
-export async function add_project_from_path() {
-  return null;
+export async function add_project_from_path(path, filePath, projectType = "mod") {
+  const file = typeof filePath === "string" ? filePath : filePath?.path || filePath;
+  if (!path || !file) return null;
+  return invoke("install_content_from_path", {
+    instanceId: path,
+    path: String(file),
+    projectType: projectType || "mod",
+  });
 }
 
 export async function toggle_disable_project(path, projectPath) {

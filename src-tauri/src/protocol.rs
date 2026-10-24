@@ -2,7 +2,7 @@
 
 use crate::error::LauncherError;
 
-pub const USER_AGENT: &str = "WinModing/0.3.1 (https://github.com/vithorixscom-debug/WinModing)";
+pub const USER_AGENT: &str = "WinModing/0.3.2 (https://github.com/vithorixscom-debug/WinModing)";
 
 pub const MODRINTH_API: &str = "https://api.modrinth.com/v2";
 pub const CURSEFORGE_API: &str = "https://api.curseforge.com/v1";

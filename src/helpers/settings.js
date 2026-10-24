@@ -37,6 +37,7 @@ function frontendDefaults(memoryMax = 4096) {
     catalog_duplicate_pref: "both",
     catalog_page_size: 20,
     custom_dir: null,
+    network_proxy: "",
     loaded_config_dir: null,
   };
 }
@@ -71,6 +72,7 @@ function fromBackend(remote) {
       remote.catalogDuplicatePref || "both",
     catalog_page_size: Number(remote.catalogPageSize) || 20,
     custom_dir: remote.customDir || remote.custom_dir || null,
+    network_proxy: remote.networkProxy || remote.network_proxy || "",
   };
 }
 
@@ -101,6 +103,7 @@ function toBackend(settings) {
     catalogDuplicatePref: settings.catalog_duplicate_pref || "both",
     catalogPageSize: Number(settings.catalog_page_size) || 20,
     customDir: settings.custom_dir || null,
+    networkProxy: String(settings.network_proxy || "").trim() || null,
   };
 }
 

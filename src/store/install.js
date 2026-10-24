@@ -59,6 +59,37 @@ function detectCatalog(projectId, source, projectHint = {}) {
   return 'modrinth'
 }
 
+function normalizeVersions(rows) {
+  if (!Array.isArray(rows)) return []
+  return rows.map((row) => ({
+    ...row,
+    id: String(row.id ?? row.fileId ?? ''),
+    game_versions: row.game_versions || row.gameVersions || [],
+    loaders: row.loaders || [],
+    name: row.name || row.version_number || row.versionNumber || String(row.id ?? ''),
+    dependencies: row.dependencies || [],
+  }))
+}
+
+async function fetchProjectVersions(projectId, catalog) {
+  const rows = await invoke('list_project_versions', {
+    id: String(projectId),
+    source: catalog,
+    gameVersion: '',
+    loader: '',
+  }).catch(() => null)
+  if (Array.isArray(rows) && rows.length) return normalizeVersions(rows)
+
+  // Fallback: unfiltered Modrinth version list.
+  if (catalog === 'modrinth') {
+    const all = await invoke('catalog_get_json', {
+      url: `https://api.modrinth.com/v2/project/${encodeURIComponent(String(projectId))}/version`,
+    }).catch(() => [])
+    return normalizeVersions(all)
+  }
+  return []
+}
+
 export const install = async (
   projectId,
   versionId,
@@ -70,7 +101,7 @@ export const install = async (
   const catalog = detectCatalog(projectId, source, projectHint)
   const projectType = projectHint.project_type || projectHint.projectType || 'mod'
   if (!instancePath) {
-    // Modpacks become a new profile with the pack's icon — not a raw downloads dump.
+    // Modpacks become a new profile with the pack's icon.
     if (String(projectType).toLowerCase() === 'modpack') {
       try {
         const { install: packInstall } = await import('@/helpers/pack.js')
@@ -93,31 +124,61 @@ export const install = async (
       }
       return
     }
+
+    // Mods / resource packs: pick a profile instead of dumping into Downloads.
     try {
-      const saved = await invoke('save_catalog_download', {
+      let project = projectHint
+      if (!project?.title && !project?.name) {
+        project = (await get_project(projectId).catch(() => null)) || projectHint
+      }
+      project = {
+        ...project,
+        id: project.id || project.project_id || projectId,
+        project_id: project.project_id || project.id || projectId,
+        project_type: projectType,
+        source: catalog,
+      }
+      const versions = versionId
+        ? normalizeVersions([
+            (await invoke('get_catalog_version', { id: String(versionId) }).catch(() => null)) || {
+              id: versionId,
+              game_versions: project.game_versions || [],
+              loaders: project.loaders || [],
+              dependencies: [],
+            },
+          ])
+        : await fetchProjectVersions(projectId, catalog)
+      if (!versions.length) {
+        handleError(new Error(t('install.noVersions')))
+        return
+      }
+      const store = useInstall()
+      if (store.modInstallModal) {
+        store.showModInstallModal(project, versions, callback)
+        return
+      }
+      // Fallback if modal not mounted yet: install into first profile.
+      const target = await resolveInstancePath(null)
+      if (!target) {
+        handleError(new Error(t('install.needProfile')))
+        return
+      }
+      await invoke('install_content', {
         request: {
+          instanceId: target,
           projectId: String(projectId),
-          versionId: versionId || null,
+          versionId: versions[0].id || versionId || null,
           source: catalog,
           projectType,
         },
       })
-      try {
-        const notifs = useNotifications()
-        notifs.addNotification({
-          title: t('install.savedTitle'),
-          text: saved?.path || t('install.savedText'),
-          type: 'success',
-        })
-      } catch {
-        /* ignore */
-      }
-      callback(versionId || 'latest')
+      callback(versions[0].id || versionId || 'latest')
     } catch (error) {
       handleError(error)
     }
     return
   }
+
   const target = await resolveInstancePath(instancePath)
   if (!target) {
     handleError(new Error(t('install.needProfile')))
@@ -140,27 +201,37 @@ export const install = async (
 }
 
 export const installVersionDependencies = async (profile, version) => {
-  for (const dep of version.dependencies) {
+  for (const dep of version.dependencies || []) {
     if (dep.dependency_type !== 'required') continue
     if (dep.project_id === 'P7dR8mSH' && profile.loader === 'quilt') continue
     if (dep.version_id) {
       if (dep.project_id && (await check_installed(profile.path, dep.project_id).catch(handleError)))
         continue
-      await add_project_from_version(profile.path, dep.version_id)
+      await add_project_from_version(profile.path, dep.version_id, {
+        projectId: dep.project_id,
+        source: 'modrinth',
+      })
     } else {
       if (dep.project_id && (await check_installed(profile.path, dep.project_id).catch(handleError)))
         continue
 
       const depProject = await get_project(dep.project_id, 'must_revalidate').catch(handleError)
+      if (!depProject) continue
+      const versionIds = depProject.versions || []
       const depVersions = (
-        await get_version_many(depProject.versions, 'must_revalidate').catch(handleError)
+        await get_version_many(versionIds, 'must_revalidate').catch(handleError)
       ).sort((a, b) => dayjs(b.date_published) - dayjs(a.date_published))
 
       const latest = depVersions.find(
-        (v) => v.game_versions.includes(profile.game_version) && v.loaders.includes(profile.loader),
+        (v) =>
+          (v.game_versions || []).includes(profile.game_version) &&
+          (v.loaders || []).includes(profile.loader),
       )
       if (latest) {
-        await add_project_from_version(profile.path, latest.id).catch(handleError)
+        await add_project_from_version(profile.path, latest.id, {
+          projectId: dep.project_id,
+          source: 'modrinth',
+        }).catch(handleError)
       }
     }
   }

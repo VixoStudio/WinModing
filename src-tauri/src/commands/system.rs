@@ -76,11 +76,11 @@ pub fn list_icon_gallery(state: State<'_, AppState>) -> Vec<GalleryIcon> {
 #[tauri::command]
 pub fn read_image_data_url(path: String) -> Result<String, LauncherError> {
     let path = PathBuf::from(path);
-    let ext = path
-        .extension()
-        .and_then(|value| value.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
+            let ext = path
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
     if !matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "webp" | "gif") {
         return Err(LauncherError::Message("unsupported image type".into()));
     }

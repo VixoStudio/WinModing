@@ -105,6 +105,7 @@ pub fn run() {
             commands::microsoft_client_id_set,
             commands::resolve_dependencies,
             commands::install_content,
+            commands::install_content_from_path,
             commands::add_project_from_version,
             commands::list_installed_content,
             commands::content_is_installed,

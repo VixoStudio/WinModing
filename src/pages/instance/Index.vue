@@ -69,10 +69,6 @@
       </Card>
     </div>
     <div class="content">
-      <Card v-if="crashNote" class="crash-card">
-        <strong>{{ i18n('instance.crashTitle') }}</strong>
-        <pre>{{ crashNote }}</pre>
-      </Card>
       <Card v-if="childError" class="child-error">{{ childError }}</Card>
       <RouterView v-slot="{ Component }">
         <template v-if="Component">
@@ -182,7 +178,6 @@ watch(
         next.name.length > 40 ? `${next.name.substring(0, 40)}...` : next.name,
       )
       breadcrumbs.setContext({ name: next.name, link: route.path, query: route.query })
-      crashNote.value = next.last_crash || ''
       await checkProcess()
     }
   },
@@ -216,7 +211,6 @@ const loading = ref(false)
 const options = ref(null)
 const selected = ref([])
 const childError = ref('')
-const crashNote = ref(instance.value?.last_crash || '')
 const playtimeLabel = computed(() => {
   void locale.value
   return formatPlayLabel(instancePlaySeconds(instance.value), i18n)
@@ -366,8 +360,7 @@ const unlistenProfiles = await profile_listener(async (event) => {
 const unlistenProcesses = await process_listener((e) => {
   const event = String(e?.event || '').toLowerCase()
   if (e.profile_path_id !== route.params.id) return
-  if (event === 'crashed') crashNote.value = e.message || i18n('instance.crashTitle')
-  if (event === 'finished') playing.value = false
+  if (event === 'finished' || event === 'crashed') playing.value = false
 })
 
 onUnmounted(() => {
@@ -391,18 +384,6 @@ onUnmounted(() => {
   font-size: 0.8rem;
   font-weight: 500;
   letter-spacing: 0.01em;
-}
-
-.crash-card {
-  white-space: pre-wrap;
-  color: var(--color-red);
-  pre {
-    white-space: pre-wrap;
-    font-size: 0.8rem;
-    margin: 0.5rem 0 0;
-    max-height: 14rem;
-    overflow: auto;
-  }
 }
 
 .button-group {

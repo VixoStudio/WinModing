@@ -34,6 +34,10 @@ pub struct LauncherSettings {
     pub catalog_page_size: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_dir: Option<String>,
+    /// Optional HTTP/SOCKS proxy for Microsoft auth & downloads when RU IP is blocked.
+    /// Examples: `http://127.0.0.1:7890`, `socks5h://127.0.0.1:10808`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network_proxy: Option<String>,
 }
 
 impl Default for LauncherSettings {
@@ -53,6 +57,7 @@ impl Default for LauncherSettings {
             catalog_duplicate_pref: "both".into(),
             catalog_page_size: 20,
             custom_dir: None,
+            network_proxy: None,
         }
     }
 }

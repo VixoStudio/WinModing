@@ -308,6 +308,21 @@ await getBranches()
         </label>
         <Toggle id="disable-discord-rpc" v-model="settings.discord_rpc" :checked="settings.discord_rpc" />
       </div>
+      <div class="adjacent-input">
+        <label for="network-proxy">
+          <span class="label__title">{{ i18n('settings.proxy') }}</span>
+          <span class="label__description">{{ i18n('settings.proxyHint') }}</span>
+        </label>
+        <input
+          id="network-proxy"
+          v-model="settings.network_proxy"
+          type="text"
+          class="text-input"
+          spellcheck="false"
+          autocomplete="off"
+          :placeholder="i18n('settings.proxyPlaceholder')"
+        />
+      </div>
       <div v-if="getOS() != 'MacOS'" class="adjacent-input">
         <label for="native-decorations">
           <span class="label__title">{{ i18n('settings.native') }}</span>
@@ -710,5 +725,15 @@ a.github:active {
   margin-left: 0.5rem;
   font-size: 1rem;
   padding: 0.5rem;
+}
+
+.text-input {
+  min-width: 18rem;
+  max-width: 28rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-button-bg);
+  background: var(--color-bg);
+  color: var(--color-base);
 }
 </style>
