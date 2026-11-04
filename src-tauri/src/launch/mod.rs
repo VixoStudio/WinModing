@@ -100,11 +100,8 @@ pub async fn launch_instance(
     let runtimes = java::detect_java_runtimes().await?;
     let mut runtime = java::select_runtime(&runtimes, java_major);
     if runtime.is_err() {
-        let managed = paths
-            .java_home(java_major)
-            .join("bin")
-            .join(if cfg!(windows) { "javaw.exe" } else { "java" });
-        if managed.exists() {
+        // Managed JRE extracted from Adoptium nests one level deep (jdk-21.x+jre/).
+        if let Some(managed) = java::find_java(&paths.java_home(java_major)) {
             runtime = Ok(crate::domain::JavaRuntime {
                 path: managed.display().to_string(),
                 major: java_major,
@@ -113,7 +110,14 @@ pub async fn launch_instance(
             });
         }
     }
-    let runtime = runtime?;
+    let runtime = match runtime {
+        Ok(runtime) => runtime,
+        Err(_) => {
+            // Auto-download the missing runtime instead of failing the launch.
+            log::info!("Java {java_major} missing — auto-installing Adoptium JRE");
+            java::install_adoptium(http, paths, java_major).await?
+        }
+    };
     let java_path = prefer_hidden_java(&runtime.path);
 
     let natives_dir = natives::fresh_natives_dir(&paths.instance_dir(instance_id));
@@ -267,10 +271,21 @@ pub async fn launch_instance(
             plan.args = prefix.into_iter().chain(wrapped).collect();
         }
     }
+    let safe_args: Vec<String> = plan
+        .args
+        .iter()
+        .map(|arg| {
+            if arg == &tokens.access_token {
+                "<redacted-access-token>".to_string()
+            } else {
+                arg.clone()
+            }
+        })
+        .collect();
     let dump = format!(
         "{}\n{}\nclasspath={}\nnatives={}\n",
         plan.java_path,
-        plan.args.join("\n"),
+        safe_args.join("\n"),
         tokens.classpath,
         tokens.natives_directory
     );

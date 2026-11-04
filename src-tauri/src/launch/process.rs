@@ -23,7 +23,37 @@ pub struct RunningGames {
 }
 
 impl RunningGames {
+    /// Drop finished/crashed children so a dead session cannot block relaunch.
+    pub fn reap(&self) {
+        let mut map = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut dead = Vec::new();
+        for (id, child) in map.iter_mut() {
+            match child.try_wait() {
+                Ok(Some(_)) => dead.push(id.clone()),
+                // Broken handle / vanished process — treat as gone.
+                Err(_) => dead.push(id.clone()),
+                Ok(None) => {}
+            }
+        }
+        for id in dead {
+            map.remove(&id);
+        }
+    }
+
     pub fn contains(&self, instance_id: &str) -> bool {
+        // Reap first so UI / relaunch never see a dead Child as "running".
+        self.reap();
+        self.inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .contains_key(instance_id)
+    }
+
+    /// Map membership only (no reap). Used by the exit watcher after poll_exit.
+    pub fn is_tracked(&self, instance_id: &str) -> bool {
         self.inner
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -37,10 +67,15 @@ impl RunningGames {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .remove(instance_id);
         if let Some(mut child) = child {
-            child
-                .kill()
-                .await
-                .map_err(|err| crate::error::io_at(instance_id, err))?;
+            match child.try_wait() {
+                Ok(Some(_)) | Err(_) => {}
+                Ok(None) => {
+                    if let Err(err) = child.kill().await {
+                        // Slot already cleared — do not block relaunch on kill failure.
+                        let _ = err;
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -56,7 +91,11 @@ impl RunningGames {
                 map.remove(instance_id);
                 Some(status.code().unwrap_or(-1))
             }
-            _ => None,
+            Err(_) => {
+                map.remove(instance_id);
+                Some(-1)
+            }
+            Ok(None) => None,
         }
     }
 }
@@ -67,6 +106,7 @@ pub async fn spawn_game(
     plan: &PlannedCommand,
     logs: mpsc::UnboundedSender<LogLine>,
 ) -> Result<u32, LauncherError> {
+    // Reap finished/crashed children so a dead session cannot block relaunch.
     if games.contains(instance_id) {
         return Err(LauncherError::AlreadyRunning {
             id: instance_id.to_string(),

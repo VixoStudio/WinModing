@@ -397,6 +397,27 @@ fn version_rank(value: &str) -> Vec<u32> {
         .collect()
 }
 
+/// True only when `remote` is strictly newer than `local` (never equal/older).
+fn version_is_newer(remote: &str, local: &str) -> bool {
+    let left = version_rank(remote);
+    let right = version_rank(local);
+    if left.is_empty() && right.is_empty() {
+        return false;
+    }
+    let len = left.len().max(right.len());
+    for index in 0..len {
+        let a = left.get(index).copied().unwrap_or(0);
+        let b = right.get(index).copied().unwrap_or(0);
+        if a > b {
+            return true;
+        }
+        if a < b {
+            return false;
+        }
+    }
+    false
+}
+
 fn better_mod(left: &InstalledContent, right: &InstalledContent) -> bool {
     let left_catalog = left.source != "local";
     let right_catalog = right.source != "local";
@@ -614,7 +635,8 @@ async fn resolve_modrinth_file(
     project_id: &str,
     version_id: Option<&str>,
 ) -> Result<ResolvedFile, LauncherError> {
-    let version: serde_json::Value = if let Some(id) = version_id.filter(|value| !value.is_empty()) {
+    let version: serde_json::Value = if let Some(id) = version_id.filter(|value| !value.is_empty())
+    {
         http.get_json(
             &format!("{MODRINTH_API}/version/{}", urlencoding::encode(id)),
             &[],
@@ -630,9 +652,10 @@ async fn resolve_modrinth_file(
                 &[],
             )
             .await?;
-        versions.into_iter().next().ok_or_else(|| {
-            LauncherError::Message(format!("no files for {project_id}"))
-        })?
+        versions
+            .into_iter()
+            .next()
+            .ok_or_else(|| LauncherError::Message(format!("no files for {project_id}")))?
     };
     let files = version
         .get("files")
@@ -678,9 +701,11 @@ async fn resolve_curseforge_file(
     api_key: &str,
 ) -> Result<ResolvedFile, LauncherError> {
     let project_id = curseforge_numeric_id(project_id);
-    let file = if let Some(file_id) =
-        version_id.filter(|value| curseforge_numeric_id(value).chars().all(|ch| ch.is_ascii_digit()))
-    {
+    let file = if let Some(file_id) = version_id.filter(|value| {
+        curseforge_numeric_id(value)
+            .chars()
+            .all(|ch| ch.is_ascii_digit())
+    }) {
         let file_id = curseforge_numeric_id(file_id);
         let parsed: CfFileWrap = http
             .get_json(
@@ -696,9 +721,8 @@ async fn resolve_curseforge_file(
                 &curseforge_headers(api_key),
             )
             .await?;
-        pick_curseforge_file(parsed.data, "", "").ok_or_else(|| {
-            LauncherError::Message(format!("no CurseForge file for {project_id}"))
-        })?
+        pick_curseforge_file(parsed.data, "", "")
+            .ok_or_else(|| LauncherError::Message(format!("no CurseForge file for {project_id}")))?
     };
     let mut download = file
         .download_url
@@ -1187,9 +1211,11 @@ pub async fn install_curseforge(
     api_key: &str,
 ) -> Result<Vec<String>, LauncherError> {
     let project_id = curseforge_numeric_id(project_id);
-    let file = if let Some(file_id) =
-        version_id.filter(|value| curseforge_numeric_id(value).chars().all(|ch| ch.is_ascii_digit()))
-    {
+    let file = if let Some(file_id) = version_id.filter(|value| {
+        curseforge_numeric_id(value)
+            .chars()
+            .all(|ch| ch.is_ascii_digit())
+    }) {
         let file_id = curseforge_numeric_id(file_id);
         let parsed: CfFileWrap = http
             .get_json(
@@ -1549,10 +1575,7 @@ pub async fn catalog_versions(
             .collect());
     }
     let _ = cache;
-    let mut url = format!(
-        "{MODRINTH_API}/project/{}/version",
-        urlencoding::encode(id)
-    );
+    let mut url = format!("{MODRINTH_API}/project/{}/version", urlencoding::encode(id));
     let mut qs = Vec::new();
     if !game_version.trim().is_empty() {
         qs.push(format!(
@@ -1605,7 +1628,7 @@ pub async fn content_updates(
             .unwrap_or_else(|| pretty_version_label(&file.file_name));
         let latest = if file.source.contains("curse") || is_curseforge_id(&file.project_id) {
             let mut url = format!(
-                "{CURSEFORGE_API}/mods/{}/files?pageSize=5",
+                "{CURSEFORGE_API}/mods/{}/files?pageSize=50",
                 curseforge_numeric_id(&file.project_id)
             );
             if !game_version.is_empty() {
@@ -1661,11 +1684,14 @@ pub async fn content_updates(
         if latest_id.is_empty() {
             continue;
         }
-        if !current.is_empty() {
-            if latest_id == current {
-                continue;
-            }
-        } else if latest_number == current_number {
+        if !current.is_empty() && latest_id == current {
+            continue;
+        }
+        if latest_number == current_number {
+            continue;
+        }
+        // Never offer a downgrade: remote must be strictly newer by version tokens.
+        if !version_is_newer(&latest_number, &current_number) {
             continue;
         }
         out.push(ContentUpdate {
@@ -2064,5 +2090,14 @@ mod tests {
     fn remove_content_rejects_traversal() {
         let paths = dummy_paths();
         assert!(remove_content(&paths, "ok-instance", "../secret.jar").is_err());
+    }
+
+    #[test]
+    fn version_newer_rejects_downgrade_and_equal() {
+        assert!(version_is_newer("0.3.2", "0.3.1"));
+        assert!(version_is_newer("v0.4.0", "0.3.9"));
+        assert!(!version_is_newer("0.3.1", "0.3.2"));
+        assert!(!version_is_newer("0.3.2", "0.3.2"));
+        assert!(!version_is_newer("0.2.0", "0.3.0"));
     }
 }

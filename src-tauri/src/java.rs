@@ -47,6 +47,24 @@ fn scan_java_candidates() -> Result<Vec<JavaRuntime>, LauncherError> {
             "JAVA_HOME",
         );
     }
+    // Launcher-managed Adoptium runtimes (%LOCALDATA%/WinModing/runtime/java-*).
+    if let Ok(managed_root) = crate::paths::AppPaths::resolve() {
+        let runtime_root = managed_root.runtime.clone();
+        if let Ok(entries) = std::fs::read_dir(&runtime_root) {            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_dir() || !path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("java-"))
+                {
+                    continue;
+                }
+                if let Some(binary) = find_java(&path) {
+                    push_candidate(&mut found, &mut seen, binary, "runtime");
+                }
+            }
+        }
+    }
     for root in well_known_roots() {
         if !root.exists() {
             continue;
@@ -157,7 +175,7 @@ fn extract_zip_blocking(archive: &Path, dest: &Path) -> Result<(), LauncherError
     Ok(())
 }
 
-fn find_java(root: &Path) -> Option<PathBuf> {
+pub fn find_java(root: &Path) -> Option<PathBuf> {
     let mut stack = vec![(root.to_path_buf(), 0u8)];
     while let Some((dir, depth)) = stack.pop() {
         if depth > 6 {

@@ -6,7 +6,7 @@ import { PlayIcon, PlusIcon, SearchIcon, XIcon } from '@modrinth/assets'
 import { ServerIcon } from '@/assets/icons'
 import { useBreadcrumbs } from '@/store/breadcrumbs'
 import { handleError } from '@/store/notifications.js'
-import { list, run } from '@/helpers/profile.js'
+import { list, run, edit } from '@/helpers/profile.js'
 import { listRecommendedServers, serverStatus } from '@/helpers/servers.js'
 import { mediaSrc } from '@/helpers/media.js'
 import { t as translate, useI18n } from '@/helpers/i18n.js'
@@ -14,6 +14,7 @@ import { t as translate, useI18n } from '@/helpers/i18n.js'
 const { t: i18n } = useI18n()
 const route = useRoute()
 const router = useRouter()
+const routeInstanceId = computed(() => (route.params.id ? String(route.params.id) : ''))
 const breadcrumbs = useBreadcrumbs()
 breadcrumbs.setRootContext({ name: translate('nav.servers'), link: route.path })
 
@@ -179,8 +180,10 @@ function pickInstanceFor(server) {
 async function refreshInstances() {
   const listProfiles = (await list().catch(handleError)) ?? []
   instances.value = listProfiles
-  const saved = localStorage.getItem(INSTANCE_KEY) || ''
-  if (saved && listProfiles.some((p) => p.path === saved)) {
+  const saved = routeInstanceId.value || localStorage.getItem(INSTANCE_KEY) || ''
+  if (routeInstanceId.value && listProfiles.some((p) => p.path === routeInstanceId.value)) {
+    saveInstanceChoice(routeInstanceId.value)
+  } else if (saved && listProfiles.some((p) => p.path === saved)) {
     selectedInstance.value = saved
   } else if (listProfiles.length === 1) {
     saveInstanceChoice(listProfiles[0].path)
@@ -324,6 +327,29 @@ function serverIcon(server) {
 const selectedReady = computed(
   () => !!selectedProfile.value && selectedProfile.value.install_stage === 'installed',
 )
+const selectedQuickServers = computed(() => selectedProfile.value?.quick_servers || [])
+
+function isSavedToProfile(server) {
+  return selectedQuickServers.value.some((item) => item.address?.toLowerCase() === server.address.toLowerCase())
+}
+
+async function toggleProfileServer(server) {
+  if (!selectedProfile.value) {
+    handleError(new Error(i18n('servers.needInstance')))
+    return
+  }
+  const saved = selectedQuickServers.value
+  const exists = isSavedToProfile(server)
+  const next = exists
+    ? saved.filter((item) => item.address?.toLowerCase() !== server.address.toLowerCase())
+    : [...saved, { name: server.name, address: server.address }]
+  try {
+    await edit(selectedProfile.value.path, { quick_servers: next })
+    selectedProfile.value.quick_servers = next
+  } catch (error) {
+    handleError(error)
+  }
+}
 
 function addCustom() {
   const address = customAddress.value.trim()
@@ -397,6 +423,9 @@ onMounted(async () => {
   void hydrateLogos(FEATURED)
   void pingVisible({ force: true })
   await loadRecommended()
+  if (routeInstanceId.value && selectedProfile.value) {
+    category.value = ''
+  }
 })
 
 onUnmounted(() => {
@@ -534,6 +563,9 @@ onUnmounted(() => {
           >
             <PlayIcon />
             {{ joining === server.address ? i18n('servers.joining') : i18n('instance.serverJoin') }}
+          </Button>
+          <Button :disabled="!selectedProfile" @click="toggleProfileServer(server)">
+            {{ isSavedToProfile(server) ? i18n('servers.removeFromProfile') : i18n('servers.addToProfile') }}
           </Button>
           <Button v-if="server.custom" @click="removeCustom(server.address)">
             <XIcon />

@@ -76,11 +76,11 @@ pub fn list_icon_gallery(state: State<'_, AppState>) -> Vec<GalleryIcon> {
 #[tauri::command]
 pub fn read_image_data_url(path: String) -> Result<String, LauncherError> {
     let path = PathBuf::from(path);
-            let ext = path
-                .extension()
-                .and_then(|value| value.to_str())
-                .unwrap_or("")
-                .to_ascii_lowercase();
+    let ext = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
     if !matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "webp" | "gif") {
         return Err(LauncherError::Message("unsupported image type".into()));
     }
@@ -200,7 +200,10 @@ fn cached_real_face(cache_dir: &Path, cache_key: &str) -> Option<String> {
     if !cache.is_file() || !marker.is_file() {
         return None;
     }
-    if std::fs::metadata(&cache).map(|m| m.len() < 64).unwrap_or(true) {
+    if std::fs::metadata(&cache)
+        .map(|m| m.len() < 64)
+        .unwrap_or(true)
+    {
         return None;
     }
     crate::content::file_data_url(&cache)
@@ -306,9 +309,7 @@ pub fn player_face_remember(
         return Ok(());
     };
     let uuid = uuid.as_deref().and_then(normalize_uuid);
-    let cache_key = uuid
-        .clone()
-        .unwrap_or_else(|| name.to_ascii_lowercase());
+    let cache_key = uuid.clone().unwrap_or_else(|| name.to_ascii_lowercase());
     let Some(skin_bytes) = decode_skin_data_url(&skin_data) else {
         return Ok(());
     };
@@ -330,9 +331,7 @@ pub async fn player_face(
         return Ok(String::new());
     };
     let uuid = uuid.as_deref().and_then(normalize_uuid);
-    let cache_key = uuid
-        .clone()
-        .unwrap_or_else(|| name.to_ascii_lowercase());
+    let cache_key = uuid.clone().unwrap_or_else(|| name.to_ascii_lowercase());
     let root = state.paths.root.clone();
     let cache_dir = root.join("avatars");
 
@@ -431,10 +430,7 @@ fn guess_media_mime(bytes: &[u8]) -> &'static str {
 
 /// Fetch catalog icons / media through the same RF-aware pool (forgecdn → Millida dl).
 #[tauri::command]
-pub async fn proxy_media(
-    state: State<'_, AppState>,
-    url: String,
-) -> Result<String, LauncherError> {
+pub async fn proxy_media(state: State<'_, AppState>, url: String) -> Result<String, LauncherError> {
     let raw = url.trim();
     if raw.is_empty() {
         return Ok(String::new());
@@ -513,4 +509,61 @@ pub async fn server_status(
     }
     // Native SLP — mcsrvstat.us / mcstatus.io are often blocked in RF.
     Ok(crate::server_ping::ping_java(&safe).await)
+}
+
+/// Download a new WinModing.exe and schedule replace after exit (portable AppData install).
+#[tauri::command]
+pub async fn install_launcher_update(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    url: String,
+) -> Result<String, LauncherError> {
+    assert_trusted_https(&url)?;
+    let current = std::env::current_exe()
+        .map_err(|err| LauncherError::Message(format!("cannot locate running exe: {err}")))?;
+    let dir = current
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| state.paths.root.clone());
+    let staged = dir.join("WinModing.exe.new");
+    let bak = dir.join("WinModing.exe.bak");
+    let target = dir.join("WinModing.exe");
+    let http = state.http.clone();
+    drop(state);
+    http.download_to(&url, &staged).await?;
+    if !staged.is_file() {
+        return Err(LauncherError::Message("update download failed".into()));
+    }
+
+    #[cfg(windows)]
+    {
+        let script = dir.join("winmoding-apply-update.cmd");
+        let body = format!(
+            "@echo off\r\n\
+             ping -n 3 127.0.0.1 >nul\r\n\
+             if exist \"{bak}\" del /f /q \"{bak}\"\r\n\
+             if exist \"{target}\" move /y \"{target}\" \"{bak}\" >nul\r\n\
+             move /y \"{staged}\" \"{target}\" >nul\r\n\
+             start \"\" \"{target}\"\r\n\
+             del /f /q \"%~f0\"\r\n",
+            bak = bak.display(),
+            target = target.display(),
+            staged = staged.display(),
+        );
+        std::fs::write(&script, body).map_err(|err| crate::error::io_at(&script, err))?;
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", &script.display().to_string()])
+            .spawn()
+            .map_err(|err| LauncherError::Message(format!("could not schedule update: {err}")))?;
+        let _ = app.exit(0);
+        return Ok(target.display().to_string());
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = (app, bak, target);
+        Err(LauncherError::Message(
+            "self-update is only supported on Windows".into(),
+        ))
+    }
 }

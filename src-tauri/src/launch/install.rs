@@ -53,7 +53,25 @@ pub async fn install_vanilla(
     mut progress: impl FnMut(InstallProgress),
 ) -> Result<InstallReport, LauncherError> {
     progress(stage("manifest", 0, 1, version_id));
-    let manifest_text = http.get_text(VERSION_MANIFEST_V2, &[]).await?;
+    // Try mirrors for version manifest
+    let mut manifest_text = None;
+    let mut last_err = None;
+    for mirror in crate::protocol::VERSION_MANIFEST_MIRRORS {
+        match http.get_text(mirror, &[]).await {
+            Ok(text) => {
+                manifest_text = Some(text);
+                break;
+            }
+            Err(err) => {
+                log::warn!("Version manifest mirror {} failed: {}", mirror, err);
+                last_err = Some(err);
+            }
+        }
+    }
+    let manifest_text = manifest_text.ok_or_else(|| {
+        last_err
+            .unwrap_or_else(|| LauncherError::Message("All version manifest mirrors failed".into()))
+    })?;
     let manifest: Manifest =
         serde_json::from_str(&manifest_text).map_err(|err| LauncherError::CorruptVersion {
             reason: format!("version manifest: {err}"),

@@ -100,6 +100,9 @@ pub enum LoaderKind {
     Forge,
     NeoForge,
     Quilt,
+    Pomme,
+    Horizon,
+    Win,
 }
 
 impl LoaderKind {
@@ -109,6 +112,9 @@ impl LoaderKind {
             "forge" => Self::Forge,
             "neoforge" => Self::NeoForge,
             "quilt" => Self::Quilt,
+            "pomme" => Self::Pomme,
+            "horizon" => Self::Horizon,
+            "win" => Self::Win,
             _ => Self::Vanilla,
         }
     }
@@ -120,6 +126,9 @@ impl LoaderKind {
             Self::Forge => "forge",
             Self::NeoForge => "neoforge",
             Self::Quilt => "quilt",
+            Self::Pomme => "pomme",
+            Self::Horizon => "horizon",
+            Self::Win => "win",
         }
     }
 }

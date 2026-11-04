@@ -15,6 +15,8 @@ use crate::state::AppState;
 
 mod accounts;
 mod catalog;
+mod native_clients;
+mod servers;
 mod settings;
 mod skins;
 mod system;
@@ -32,10 +34,12 @@ pub use catalog::{
     __tauri_command_name_get_catalog_project, __tauri_command_name_get_catalog_version,
     __tauri_command_name_list_project_versions, __tauri_command_name_list_saved_catalog,
     __tauri_command_name_open_downloads_folder, __tauri_command_name_save_catalog_download,
-    __tauri_command_name_search_catalog, catalog_get_json, get_catalog_project, get_catalog_version,
-    list_project_versions, list_saved_catalog, open_downloads_folder, save_catalog_download,
-    search_catalog,
+    __tauri_command_name_search_catalog, catalog_get_json, get_catalog_project,
+    get_catalog_version, list_project_versions, list_saved_catalog, open_downloads_folder,
+    save_catalog_download, search_catalog,
 };
+pub use native_clients::*;
+pub use servers::*;
 pub use settings::{
     __cmd__app_directory, __cmd__curseforge_key_set, __cmd__discord_set_idle,
     __cmd__get_launcher_settings, __cmd__get_max_memory, __cmd__is_dev,
@@ -63,15 +67,17 @@ pub use skins::{
     ms_reset_skin, ms_set_cape, ms_skin_profile, save_skin, set_skin_slim,
 };
 pub use system::{
-    __cmd__drag_window, __cmd__list_icon_gallery, __cmd__list_recommended_servers,
-    __cmd__open_external, __cmd__player_face, __cmd__player_face_remember, __cmd__proxy_media,
-    __cmd__read_image_data_url, __cmd__server_status, __tauri_command_name_drag_window,
-    __tauri_command_name_list_icon_gallery, __tauri_command_name_list_recommended_servers,
-    __tauri_command_name_open_external, __tauri_command_name_player_face,
-    __tauri_command_name_player_face_remember, __tauri_command_name_proxy_media,
-    __tauri_command_name_read_image_data_url, __tauri_command_name_server_status, drag_window,
-    list_icon_gallery, list_recommended_servers, open_external, player_face, player_face_remember,
-    proxy_media, read_image_data_url, server_status,
+    __cmd__drag_window, __cmd__install_launcher_update, __cmd__list_icon_gallery,
+    __cmd__list_recommended_servers, __cmd__open_external, __cmd__player_face,
+    __cmd__player_face_remember, __cmd__proxy_media, __cmd__read_image_data_url,
+    __cmd__server_status, __tauri_command_name_drag_window,
+    __tauri_command_name_install_launcher_update, __tauri_command_name_list_icon_gallery,
+    __tauri_command_name_list_recommended_servers, __tauri_command_name_open_external,
+    __tauri_command_name_player_face, __tauri_command_name_player_face_remember,
+    __tauri_command_name_proxy_media, __tauri_command_name_read_image_data_url,
+    __tauri_command_name_server_status, drag_window, install_launcher_update, list_icon_gallery,
+    list_recommended_servers, open_external, player_face, player_face_remember, proxy_media,
+    read_image_data_url, server_status,
 };
 
 fn json_u64(value: &serde_json::Value) -> Option<u64> {
@@ -81,7 +87,7 @@ fn json_u64(value: &serde_json::Value) -> Option<u64> {
         .or_else(|| value.as_str()?.parse().ok())
 }
 
-fn slug_id(name: &str) -> String {
+pub fn slug_id(name: &str) -> String {
     let mut slug: String = name
         .chars()
         .map(|ch| {
@@ -170,7 +176,12 @@ fn build_instance_record(request: &CreateInstanceRequest) -> Result<InstanceReco
         id,
         name: name.to_string(),
         game_version: request.game_version.trim().to_string(),
-        loader: LoaderKind::parse(&request.loader),
+        loader: match request.loader.trim().to_ascii_lowercase().as_str() {
+            "pomme" => LoaderKind::Pomme,
+            "horizon" => LoaderKind::Horizon,
+            "win" => LoaderKind::Win,
+            other => LoaderKind::parse(other),
+        },
         loader_version: request.loader_version.clone(),
         java_major: request.java_major,
         created_unix: std::time::SystemTime::now()
@@ -219,17 +230,12 @@ fn remember_icon_path(dir: &std::path::Path, dest: &std::path::Path) {
 
 /// Apply instance icon from a local path, data URL, or trusted https CDN URL
 /// (modpack / catalog icons from cdn.modrinth.com etc.).
-async fn apply_create_icon(
-    http: &crate::net::HttpPool,
-    dir: &std::path::Path,
-    icon: Option<&str>,
-) {
+async fn apply_create_icon(http: &crate::net::HttpPool, dir: &std::path::Path, icon: Option<&str>) {
     if let Some(src) = icon.map(str::trim).filter(|s| !s.is_empty()) {
         let dest = dir.join("icon.png");
         if src.starts_with("data:image") {
             if let Some(encoded) = src.split(',').next_back() {
-                if let Ok(bytes) =
-                    base64::engine::general_purpose::STANDARD.decode(encoded.trim())
+                if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(encoded.trim())
                 {
                     let _ = std::fs::write(&dest, bytes);
                 }
@@ -439,14 +445,25 @@ pub async fn list_game_versions(
     struct Manifest {
         versions: Vec<VersionListEntry>,
     }
-    let text = http
-        .get_text(crate::protocol::VERSION_MANIFEST_V2, &[])
-        .await?;
-    let manifest: Manifest =
-        serde_json::from_str(&text).map_err(|err| LauncherError::CorruptVersion {
-            reason: format!("version manifest: {err}"),
-        })?;
-    Ok(manifest.versions)
+    // Try mirrors for version manifest
+    let mut last_err = None;
+    for mirror in crate::protocol::VERSION_MANIFEST_MIRRORS {
+        match http.get_text(mirror, &[]).await {
+            Ok(text) => {
+                let manifest: Manifest =
+                    serde_json::from_str(&text).map_err(|err| LauncherError::CorruptVersion {
+                        reason: format!("version manifest: {err}"),
+                    })?;
+                return Ok(manifest.versions);
+            }
+            Err(err) => {
+                log::warn!("Version manifest mirror {} failed: {}", mirror, err);
+                last_err = Some(err);
+            }
+        }
+    }
+    Err(last_err
+        .unwrap_or_else(|| LauncherError::Message("All version manifest mirrors failed".into())))
 }
 
 #[tauri::command]
@@ -720,7 +737,7 @@ pub async fn launch_game(
                 crate::discord::set_idle();
                 break;
             }
-            if !games_watch.contains(&id_watch) {
+            if !games_watch.is_tracked(&id_watch) {
                 crate::discord::set_idle();
                 break;
             }
@@ -950,6 +967,8 @@ pub struct InstancePatch {
     #[serde(alias = "loader_version")]
     pub loader_version: Option<String>,
     pub groups: Option<Vec<String>>,
+    #[serde(alias = "quick_servers")]
+    pub quick_servers: Option<Vec<serde_json::Value>>,
     #[serde(alias = "java_path")]
     pub java_path: Option<String>,
     #[serde(alias = "extra_launch_args")]
@@ -1019,6 +1038,12 @@ pub async fn update_instance(
         map.insert(
             "groups".into(),
             serde_json::to_value(groups).unwrap_or_default(),
+        );
+    }
+    if let Some(quick_servers) = patch.quick_servers {
+        map.insert(
+            "quickServers".into(),
+            serde_json::to_value(quick_servers).unwrap_or_default(),
         );
     }
     if let Some(java_path) = patch.java_path {

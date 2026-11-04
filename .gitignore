@@ -28,3 +28,11 @@ ref/
 .tmp-milda2/
 .tmp-noctrinth/
 .tmp-modrinth/
+
+# Local agent journals (never commit)
+Errors.md
+NewsObnovlenie.md
+
+# Embedded rust client repo (has its own .git)
+win-client/
+.tmp-patch-update.py

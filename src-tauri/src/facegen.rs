@@ -2,7 +2,7 @@
 
 use std::io::Cursor;
 
-use image::{DynamicImage, GenericImageView, ImageBuffer, ImageFormat, Rgba, imageops};
+use image::{imageops, DynamicImage, GenericImageView, ImageBuffer, ImageFormat, Rgba};
 
 /// Crop the front head (+ hat overlay) from a classic/slim Minecraft skin PNG → 64×64.
 pub fn face_from_skin_png(skin_bytes: &[u8]) -> Option<Vec<u8>> {

@@ -350,34 +350,33 @@ pub async fn list_recommended_servers(
     // Rating catalogue first (works on RU via api.millida.net). Modrinth Server
     // Projects are still rare / empty on many mirrors — try them only as a bonus
     // merge when the first page is empty.
-    let rating = match fetch_rating_servers(http, &query, limit, offset, &sort, &category, &version)
-        .await
-    {
-        Ok(page) => page,
-        Err(_) => {
-            // Never fail the whole command — frontend keeps curated RF/abroad list.
-            match http.refresh_proxies() {
-                Ok(fresh) => fetch_rating_servers(
-                    &fresh, &query, limit, offset, &sort, &category, &version,
-                )
-                .await
-                .unwrap_or_else(|_| ServersPage {
-                    total: 0,
-                    limit,
-                    offset,
-                    source: "catalog".into(),
-                    servers: Vec::new(),
-                }),
-                Err(_) => ServersPage {
-                    total: 0,
-                    limit,
-                    offset,
-                    source: "catalog".into(),
-                    servers: Vec::new(),
-                },
+    let rating =
+        match fetch_rating_servers(http, &query, limit, offset, &sort, &category, &version).await {
+            Ok(page) => page,
+            Err(_) => {
+                // Never fail the whole command — frontend keeps curated RF/abroad list.
+                match http.refresh_proxies() {
+                    Ok(fresh) => fetch_rating_servers(
+                        &fresh, &query, limit, offset, &sort, &category, &version,
+                    )
+                    .await
+                    .unwrap_or_else(|_| ServersPage {
+                        total: 0,
+                        limit,
+                        offset,
+                        source: "catalog".into(),
+                        servers: Vec::new(),
+                    }),
+                    Err(_) => ServersPage {
+                        total: 0,
+                        limit,
+                        offset,
+                        source: "catalog".into(),
+                        servers: Vec::new(),
+                    },
+                }
             }
-        }
-    };
+        };
     if !rating.servers.is_empty() || offset > 0 {
         return Ok(rating);
     }

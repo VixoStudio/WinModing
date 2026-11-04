@@ -32,7 +32,11 @@ const TRUSTED_DOWNLOAD_HOSTS: &[&str] = &[
     "maven.neoforged.net",
     "api.adoptium.net",
     "github.com",
+    "api.github.com",
     "objects.githubusercontent.com",
+    "release-assets.githubusercontent.com",
+    "fill.papermc.io",
+    "github-releases.githubusercontent.com",
     "api.modrinth.com",
     "staging-api.modrinth.com",
     "cdn.modrinth.com",
@@ -62,6 +66,37 @@ const TRUSTED_DOWNLOAD_HOSTS: &[&str] = &[
     "cdn.millida.trade",
     "media.millida.trade",
     "static.millida.trade",
+    // RF mirrors for Minecraft assets/libraries
+    "bmclapi2.bangbang93.com",
+    "mcapi.sk1er.club",
+    "download.mcbbs.net",
+    "maven.mcbbs.net",
+    "libraries.mcbbs.net",
+    "assets.mcbbs.net",
+    // Modrinth mirrors
+    "modrinth-mirror.sk1er.club",
+    "mirror.modrinth.com",
+    "modrinth.mirror.sustech.edu.cn",
+    "modrinth.mirror.sjtu.edu.cn",
+    // CurseForge mirrors
+    "curseforge.mirrors.sustech.edu.cn",
+    "cf.mirrors.sjtug.sjtu.edu.cn",
+    // GitHub mirrors for RF
+    "ghfast.top",
+    "gh-proxy.com",
+    "gh.api.99988866.xyz",
+    "gh.ddlc.top",
+    "kkgithub.com",
+    "hub.fastgit.xyz",
+    "hub.gitmirror.com",
+    "hub.mirror.red",
+    "raw.fastgit.org",
+    "raw.githubmirror.com",
+    "raw.gitmirror.com",
+    // Adoptium mirrors
+    "mirrors.tuna.tsinghua.edu.cn",
+    "mirrors.aliyun.com",
+    "mirrors.ustc.edu.cn",
 ];
 
 /// RF catalog/file relay. Path-locked so other hosts on this domain
@@ -121,6 +156,15 @@ pub const CF_RELATION_REQUIRED: u8 = 3;
 
 pub const VERSION_MANIFEST_V2: &str =
     "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
+
+/// RF-friendly mirrors for version manifest
+pub const VERSION_MANIFEST_MIRRORS: &[&str] = &[
+    "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json",
+    "https://bmclapi2.bangbang93.com/mc/game/version_manifest_v2.json",
+    "https://mcapi.sk1er.club/mc/game/version_manifest_v2.json",
+    "https://download.mcbbs.net/mc/game/version_manifest_v2.json",
+    "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json",
+];
 pub const MINECRAFT_LIBRARIES: &str = "https://libraries.minecraft.net";
 pub const MINECRAFT_RESOURCES: &str = "https://resources.download.minecraft.net";
 
@@ -132,6 +176,40 @@ pub const NEOFORGE_MAVEN_METADATA: &str =
 pub const FORGE_PROMOTIONS: &str =
     "https://files.minecraftforge.net/maven/net/minecraftforge/forge/promotions_slim.json";
 pub const FORGE_MAVEN: &str = "https://maven.minecraftforge.net/net/minecraftforge/forge";
+
+/// RF-friendly mirrors for Fabric metadata
+pub const FABRIC_GAME_META_MIRRORS: &[&str] = &[
+    "https://meta.fabricmc.net/v2/versions/game",
+    "https://bmclapi2.bangbang93.com/fabric-meta/v2/versions/game",
+    "https://mirror.fabricmc.net/v2/versions/game",
+];
+
+/// RF-friendly mirrors for Fabric loader metadata
+pub const FABRIC_LOADER_META_MIRRORS: &[&str] = &[
+    "https://meta.fabricmc.net/v2/versions/loader",
+    "https://bmclapi2.bangbang93.com/fabric-meta/v2/versions/loader",
+    "https://mirror.fabricmc.net/v2/versions/loader",
+];
+
+/// RF-friendly mirrors for Quilt loader metadata
+pub const QUILT_LOADER_META_MIRRORS: &[&str] = &[
+    "https://meta.quiltmc.org/v3/versions/loader",
+    "https://bmclapi2.bangbang93.com/quilt-meta/v3/versions/loader",
+    "https://mirror.quiltmc.org/v3/versions/loader",
+];
+
+/// RF-friendly mirrors for NeoForge maven metadata
+pub const NEOFORGE_MAVEN_METADATA_MIRRORS: &[&str] = &[
+    "https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml",
+    "https://mirror.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml",
+];
+
+/// RF-friendly mirrors for Forge promotions
+pub const FORGE_PROMOTIONS_MIRRORS: &[&str] = &[
+    "https://files.minecraftforge.net/maven/net/minecraftforge/forge/promotions_slim.json",
+    "https://bmclapi2.bangbang93.com/maven/net/minecraftforge/forge/promotions_slim.json",
+    "https://maven.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json",
+];
 
 pub const MS_AUTHORIZE: &str = "https://login.live.com/oauth20_authorize.srf";
 pub const MS_TOKEN: &str = "https://login.live.com/oauth20_token.srf";
@@ -317,16 +395,12 @@ mod tests {
         assert!(assert_trusted_https("http://meta.fabricmc.net/x").is_err());
         assert!(assert_trusted_https("https://evil.example/x").is_err());
         assert!(assert_trusted_https("https://api.millida.net/v2/rating/servers").is_ok());
-        assert!(assert_trusted_https(
-            "https://api.millida.net/v2/rating/servers/versions"
-        )
-        .is_ok());
+        assert!(assert_trusted_https("https://api.millida.net/v2/rating/servers/versions").is_ok());
         assert!(assert_trusted_https("https://api.millida.net/v2/rating/votes").is_err());
         assert!(assert_trusted_https("https://garage.millida.net/a.zip").is_err());
-        assert!(assert_trusted_https(
-            "https://cdn.millida.trade/rating/server-icons/demo.webp"
-        )
-        .is_ok());
+        assert!(
+            assert_trusted_https("https://cdn.millida.trade/rating/server-icons/demo.webp").is_ok()
+        );
     }
 
     #[test]

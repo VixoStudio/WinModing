@@ -13,6 +13,21 @@
     <p v-if="loadError" class="options-error">{{ loadError }}</p>
     <p v-if="saveNote" class="options-saved">{{ saveNote }}</p>
 
+    <Card v-if="!instance.native_client" class="quick-join-card">
+      <div class="label">
+        <h3><span class="label__title size-card-header">{{ i18n('servers.playlists') }}</span></h3>
+      </div>
+      <p class="label__description">{{ i18n('servers.savedHint') }}</p>
+      <div v-if="quickServers.length" class="quick-server-list">
+        <div v-for="(server, index) in quickServers" :key="`${server.address}-${index}`" class="quick-server-row">
+          <div class="quick-server-copy"><strong>{{ server.name || server.address }}</strong><code>{{ server.address }}</code></div>
+          <Button color="danger" :disabled="quickServerBusy" @click="removeQuickServer(index)">{{ i18n('servers.removeFromProfile') }}</Button>
+        </div>
+      </div>
+      <p v-else class="label__description">{{ i18n('options.quickJoinEmpty') }}</p>
+      <Button @click="router.push(`/instance/${encodeURIComponent(instance.path)}/servers`)">{{ i18n('instance.servers') }}</Button>
+    </Card>
+
     <Card>
       <div class="label">
         <h3>
@@ -56,7 +71,7 @@
       />
     </Card>
 
-    <Card>
+    <Card v-if="!instance.native_client">
       <div class="label">
         <h3>
           <span class="label__title size-card-header">Java</span>
@@ -344,6 +359,22 @@ const hooks = reactive({
   post_exit: props.instance?.hooks?.post_exit ?? globalSettings.hooks?.post_exit ?? '',
 })
 
+const quickServers = ref([...(props.instance?.quick_servers || props.instance?.quickServers || [])])
+const quickServerBusy = ref(false)
+
+async function removeQuickServer(index) {
+  const next = quickServers.value.filter((_, itemIndex) => itemIndex !== index)
+  quickServerBusy.value = true
+  try {
+    await edit(props.instance.path, { quick_servers: next })
+    quickServers.value = next
+  } catch (error) {
+    handleError(error)
+  } finally {
+    quickServerBusy.value = false
+  }
+}
+
 const loader = ref(props.instance?.loader || 'vanilla')
 const gameVersion = ref(props.instance?.game_version || '')
 const loaderVersion = ref(props.instance?.loader_version || '')
@@ -521,6 +552,68 @@ async function removeProfile() {
 .options-saved {
   color: var(--color-green, #3bd671);
   margin: 0;
+}
+
+.quick-server-list {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0.75rem 0 1rem;
+}
+
+.quick-server-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--color-button-bg);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+}
+
+.quick-server-copy {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.quick-server-copy code {
+  color: var(--color-secondary);
+  overflow-wrap: anywhere;
+}
+
+.server-catalog-inline {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.server-catalog-toolbar {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.server-catalog-toolbar input {
+  min-width: 0;
+  flex: 1;
+}
+
+.server-catalog-list {
+  display: grid;
+  gap: 0.5rem;
+  max-height: 24rem;
+  overflow: auto;
+}
+
+.server-catalog-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--color-button-bg);
+  border-radius: var(--radius-md);
 }
 
 .label__description {

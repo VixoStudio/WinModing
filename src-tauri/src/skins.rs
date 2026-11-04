@@ -69,7 +69,9 @@ fn as_data_url(bytes: &[u8]) -> String {
 
 fn b64_decode(input: &str) -> Option<Vec<u8>> {
     let raw = input.rsplit(',').next().unwrap_or(input);
-    base64::engine::general_purpose::STANDARD.decode(raw.trim()).ok()
+    base64::engine::general_purpose::STANDARD
+        .decode(raw.trim())
+        .ok()
 }
 
 fn read_index(root: &Path, kind: &str) -> Vec<TextureMeta> {
@@ -114,17 +116,24 @@ fn sync_index(root: &Path, kind: &str) -> Result<Vec<TextureMeta>, LauncherError
     Ok(metas)
 }
 
-fn store(root: &Path, kind: &str, metas: &[TextureMeta]) -> Result<Vec<TextureEntry>, LauncherError> {
+fn store(
+    root: &Path,
+    kind: &str,
+    metas: &[TextureMeta],
+) -> Result<Vec<TextureEntry>, LauncherError> {
     let dir = kind_dir(root, kind)?;
     let path = index_path(root, kind)?;
-    let body = serde_json::to_vec_pretty(metas)
-        .map_err(|err| LauncherError::Message(err.to_string()))?;
+    let body =
+        serde_json::to_vec_pretty(metas).map_err(|err| LauncherError::Message(err.to_string()))?;
     fs::write(&path, body).map_err(|err| LauncherError::Message(err.to_string()))?;
     Ok(metas.iter().filter_map(|m| entry(&dir, m)).collect())
 }
 
 fn file_stem(name: &str) -> String {
-    let base = name.trim().trim_end_matches(".png").trim_end_matches(".PNG");
+    let base = name
+        .trim()
+        .trim_end_matches(".png")
+        .trim_end_matches(".PNG");
     let safe: String = base
         .chars()
         .map(|c| {
@@ -341,7 +350,11 @@ pub async fn ms_profile(http: &HttpPool, token: &str) -> Result<serde_json::Valu
         .collect();
     let skin = prof["skins"]
         .as_array()
-        .and_then(|a| a.iter().find(|s| s["state"] == "ACTIVE").or_else(|| a.first()))
+        .and_then(|a| {
+            a.iter()
+                .find(|s| s["state"] == "ACTIVE")
+                .or_else(|| a.first())
+        })
         .cloned()
         .unwrap_or(serde_json::Value::Null);
     Ok(serde_json::json!({
@@ -412,7 +425,11 @@ pub async fn ms_upload_skin(
     .await?;
     let active = res["skins"]
         .as_array()
-        .and_then(|a| a.iter().find(|s| s["state"] == "ACTIVE").or_else(|| a.first()))
+        .and_then(|a| {
+            a.iter()
+                .find(|s| s["state"] == "ACTIVE")
+                .or_else(|| a.first())
+        })
         .and_then(|s| s["url"].as_str())
         .unwrap_or_default();
     if active.is_empty() {
@@ -423,7 +440,10 @@ pub async fn ms_upload_skin(
     Ok(serde_json::json!({ "skin": to_https(Some(active)) }))
 }
 
-pub async fn ms_reset_skin(http: &HttpPool, token: &str) -> Result<serde_json::Value, LauncherError> {
+pub async fn ms_reset_skin(
+    http: &HttpPool,
+    token: &str,
+) -> Result<serde_json::Value, LauncherError> {
     let client = http.primary();
     ms_json(
         http,

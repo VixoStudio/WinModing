@@ -10,6 +10,7 @@ pub struct AppState {
     pub http: HttpPool,
     pub cache: MetadataCache,
     pub games: RunningGames,
+    pub servers: crate::servers::RunningServers,
 }
 
 impl AppState {
@@ -22,6 +23,7 @@ impl AppState {
             http,
             cache,
             games: RunningGames::default(),
+            servers: crate::servers::RunningServers::default(),
         })
     }
 }

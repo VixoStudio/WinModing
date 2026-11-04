@@ -8,8 +8,8 @@ use crate::net::HttpPool;
 use crate::paths::AppPaths;
 use crate::protocol::MODRINTH_API;
 
-use super::install_modrinth;
 use super::install_curseforge_flexible;
+use super::install_modrinth;
 
 /// Core set — skip quietly when Modrinth has no exact build for this MC version.
 const FABRIC_CORE: &[&str] = &[
@@ -55,19 +55,35 @@ pub async fn install_optimization_mods(
     let mut installed = Vec::new();
 
     for slug in FABRIC_CORE {
-        match try_install_exact(http, cache, paths, instance_id, slug, game_version, &loader_key)
-            .await
+        match try_install_exact(
+            http,
+            cache,
+            paths,
+            instance_id,
+            slug,
+            game_version,
+            &loader_key,
+        )
+        .await
         {
             Ok(names) => installed.extend(names),
-            Err(err) => log::warn!(
-                "auto-optimize core skip {slug} for {game_version}/{loader_key}: {err}"
-            ),
+            Err(err) => {
+                log::warn!("auto-optimize core skip {slug} for {game_version}/{loader_key}: {err}")
+            }
         }
     }
 
     for slug in FABRIC_OPTIONAL {
-        match try_install_exact(http, cache, paths, instance_id, slug, game_version, &loader_key)
-            .await
+        match try_install_exact(
+            http,
+            cache,
+            paths,
+            instance_id,
+            slug,
+            game_version,
+            &loader_key,
+        )
+        .await
         {
             Ok(names) => installed.extend(names),
             Err(err) => log::info!(
@@ -94,9 +110,9 @@ pub async fn install_optimization_mods(
             log::info!("auto-optimize zakoopt installed {} file(s)", names.len());
             installed.extend(names);
         }
-        Err(err) => log::warn!(
-            "auto-optimize zakoopt failed for {game_version}/{loader_key}: {err}"
-        ),
+        Err(err) => {
+            log::warn!("auto-optimize zakoopt failed for {game_version}/{loader_key}: {err}")
+        }
     }
 
     Ok(installed)
@@ -169,9 +185,10 @@ fn version_targets_exact(row: &serde_json::Value, game_version: &str, loaders: &
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
-    let game_ok = games
-        .iter()
-        .any(|g| g.as_str().is_some_and(|gv| gv.eq_ignore_ascii_case(game_version)));
+    let game_ok = games.iter().any(|g| {
+        g.as_str()
+            .is_some_and(|gv| gv.eq_ignore_ascii_case(game_version))
+    });
     if !game_ok {
         return false;
     }
@@ -222,20 +239,12 @@ mod tests {
             "game_versions": ["1.21.6"],
             "loaders": ["fabric"]
         });
-        assert!(!version_targets_exact(
-            &row,
-            "1.21.11",
-            &["fabric".into()]
-        ));
+        assert!(!version_targets_exact(&row, "1.21.11", &["fabric".into()]));
         let row2 = serde_json::json!({
             "id": "def",
             "game_versions": ["1.21.11"],
             "loaders": ["fabric"]
         });
-        assert!(version_targets_exact(
-            &row2,
-            "1.21.11",
-            &["fabric".into()]
-        ));
+        assert!(version_targets_exact(&row2, "1.21.11", &["fabric".into()]));
     }
 }

@@ -2,7 +2,11 @@
   <ModalWrapper ref="modal" :header="i18n('create.title')">
     <IconEditorModal ref="iconEditor" @saved="onIconSaved" />
     <div class="modal-header">
-      <Chips v-model="creationType" :items="['custom', 'from file', 'import from launcher']" />
+      <Chips
+        v-model="creationType"
+        :items="['custom', 'from file', 'import from launcher']"
+        :format-label="(value) => value === 'from file' ? i18n('create.fromFile') : value === 'import from launcher' ? i18n('create.importLauncher') : i18n('create.custom')"
+      />
     </div>
     <hr class="card-divider" />
     <div v-if="creationType === 'custom'" class="modal-body">
@@ -34,6 +38,11 @@
         />
       </div>
       <div class="input-row">
+        <p class="input-label">{{ i18n('create.clientType') }}</p>
+        <Chips v-model="clientType" :items="['java', 'win']" :format-label="(value) => i18n(`create.client.${value}`)" />
+      </div>
+      <template v-if="clientType === 'java'">
+      <div class="input-row">
         <p class="input-label">{{ i18n('create.loader') }}</p>
         <Chips v-model="loader" :items="loaders" />
       </div>
@@ -48,7 +57,7 @@
             :searchable="true"
             :allow-empty="true"
             :close-on-select="true"
-            placeholder="Select game version"
+            :placeholder="i18n('create.gamePlaceholder')"
             open-direction="top"
             :show-labels="false"
           />
@@ -56,7 +65,7 @@
             v-if="showAdvanced"
             v-model="showSnapshots"
             class="filter-checkbox"
-            label="Include snapshots"
+            :label="i18n('create.includeSnapshots')"
           />
         </div>
       </div>
@@ -66,19 +75,19 @@
       </div>
       <div v-if="showAdvanced && loader_version === 'other' && loader !== 'vanilla'">
         <div v-if="game_version" class="input-row">
-          <p class="input-label">Select version</p>
+          <p class="input-label">{{ i18n('create.selectLoaderVersion') }}</p>
           <multiselect
             v-model="specified_loader_version"
             class="selector"
             :options="selectable_versions"
             :searchable="true"
-            placeholder="Select loader version"
+            :placeholder="i18n('create.loaderVersionPlaceholder')"
             open-direction="top"
             :show-labels="false"
           />
         </div>
         <div v-else class="input-row">
-          <p class="warning">Select a game version before you select a loader version</p>
+          <p class="warning">{{ i18n('create.selectGameFirst') }}</p>
         </div>
       </div>
       <div v-if="loader === 'fabric' || loader === 'quilt'" class="input-row auto-opt-row">
@@ -88,7 +97,7 @@
       <div class="input-group push-right">
         <Button @click="toggle_advanced">
           <CodeIcon />
-          {{ showAdvanced ? 'Hide advanced' : 'Show advanced' }}
+          {{ showAdvanced ? i18n('create.hideAdvanced') : i18n('create.showAdvanced') }}
         </Button>
         <Button @click="hide()">
           <XIcon />
@@ -99,10 +108,19 @@
           {{ creating ? i18n('create.creating') : i18n('create.create') }}
         </Button>
       </div>
+      </template>
+      <div v-if="clientType === 'win'" class="native-client-choice">
+        <p>{{ i18n('create.clientHint') }}</p>
+        <p>{{ i18n('create.clientSelected', { client: i18n('create.client.win') }) }}</p>
+        <p class="warning">{{ i18n('nativeClients.gameClientUnavailable') }}</p>
+        <Button color="primary" disabled>
+          <PlusIcon />{{ i18n('create.create') }}
+        </Button>
+      </div>
     </div>
     <div v-else-if="creationType === 'from file'" class="modal-body">
-      <Button @click="openFile"> <FolderOpenIcon /> Import from file </Button>
-      <div class="info"><InfoIcon /> Or drag and drop your .mrpack file</div>
+      <Button @click="openFile"> <FolderOpenIcon /> {{ i18n('create.importFromFile') }} </Button>
+      <div class="info"><InfoIcon /> {{ i18n('create.dropPack') }}</div>
     </div>
     <div v-else class="modal-body">
       <Chips
@@ -111,14 +129,14 @@
         :format-label="(profile) => profile?.name"
       />
       <div class="path-selection">
-        <h3>{{ selectedProfileType.name }} path</h3>
+        <h3>{{ selectedProfileType.name }} {{ i18n('create.path') }}</h3>
         <div class="path-input">
           <div class="iconified-input">
             <FolderOpenIcon />
             <input
               v-model="selectedProfileType.path"
               type="text"
-              placeholder="Path to launcher"
+              :placeholder="i18n('create.launcherPathPlaceholder')"
               @change="setPath"
             />
             <Button class="r-btn" @click="() => (selectedLauncherPath = '')">
@@ -149,7 +167,7 @@
               "
             />
           </div>
-          <div class="name-cell table-cell">Profile name</div>
+          <div class="name-cell table-cell">{{ i18n('create.profileName') }}</div>
         </div>
         <div
           v-if="
@@ -220,9 +238,10 @@ import {
   UpdatedIcon,
 } from '@modrinth/assets'
 import { Avatar, Button, Chips, Checkbox } from '@modrinth/ui'
-import { computed, onUnmounted, ref, shallowRef } from 'vue'
+import { computed, onUnmounted, ref, shallowRef, watch } from 'vue'
 import { get_loaders } from '@/helpers/tags'
 import { create } from '@/helpers/profile'
+import { installNativeClient } from '@/helpers/nativeClients.js'
 import { open } from '@/helpers/dialog.js'
 import { convertFileSrc, invoke } from '@tauri-apps/api/core'
 import { get_game_versions, get_loader_versions } from '@/helpers/metadata'
@@ -241,6 +260,7 @@ import IconEditorModal from '@/components/ui/IconEditorModal.vue'
 import { bakeIconPng, randomIconPair } from '@/helpers/bakeIcon.js'
 
 const profile_name = ref('')
+const clientType = ref('java')
 const game_version = ref(null)
 const loader = ref('vanilla')
 const loader_version = ref('stable')
@@ -258,6 +278,8 @@ const isShowing = ref(false)
 
 defineExpose({
   show: async () => {
+    clientType.value = 'java'
+    creationType.value = 'custom'
     game_version.value = null
     specified_loader_version.value = ''
     profile_name.value = ''
@@ -328,7 +350,9 @@ if (!Array.isArray(loaders.value) || loaders.value.length === 0) {
 if (!loaders.value.includes('vanilla')) loaders.value.unshift('vanilla')
 
 const game_versions = computed(() => {
-  const versions = all_game_versions.value?.versions ?? []
+  const versions = Array.isArray(all_game_versions.value)
+    ? all_game_versions.value
+    : all_game_versions.value?.versions ?? []
   return versions
     .filter((item) => {
       let defaultVal = item.type === 'release' || showSnapshots.value
@@ -349,32 +373,57 @@ const game_versions = computed(() => {
 
 const modal = ref(null)
 
-const check_valid = computed(() => {
-  return (
-    profile_name.value.trim() &&
-    game_version.value &&
-    game_versions.value.includes(game_version.value)
-  )
-})
+const check_valid = computed(() => Boolean(
+  profile_name.value.trim() &&
+  game_version.value &&
+  game_versions.value.includes(game_version.value),
+))
+
+watch(
+  game_versions,
+  (versions) => {
+    if (!game_version.value && versions.length) game_version.value = versions[0]
+  },
+  { immediate: true },
+)
+
+const installNativeProfile = async () => {
+  const client = clientType.value
+  const name = profile_name.value.trim()
+  if (!name || client !== 'win') return
+  creating.value = true
+  try {
+    await installNativeClient(client)
+    await invoke('save_native_client_profile', { name, client, server: null })
+    hide()
+  } catch (error) {
+    handleError(error)
+  } finally {
+    creating.value = false
+  }
+}
 
 const create_instance = async () => {
   creating.value = true
   const loader_version_value =
     loader_version.value === 'other' ? specified_loader_version.value : loader_version.value
-  const loaderVersion = loader.value === 'vanilla' ? null : loader_version_value ?? 'stable'
 
-  hide()
-  creating.value = false
-
-  await create(
-    profile_name.value,
-    game_version.value,
-    loader.value,
-    loader.value === 'vanilla' ? null : loader_version_value ?? 'stable',
-    icon.value,
-    false,
-    auto_optimize.value && (loader.value === 'fabric' || loader.value === 'quilt'),
-  ).catch(handleError)
+  try {
+    await create(
+      profile_name.value,
+      game_version.value,
+      loader.value,
+      loader.value === 'vanilla' ? null : loader_version_value ?? 'stable',
+      icon.value,
+      false,
+      auto_optimize.value && (loader.value === 'fabric' || loader.value === 'quilt'),
+    )
+    hide()
+  } catch (error) {
+    handleError(error)
+  } finally {
+    creating.value = false
+  }
 }
 
 const onIconSaved = (path, dataUrl) => {
@@ -410,20 +459,18 @@ const reset_icon = () => {
 }
 
 const selectable_versions = computed(() => {
-  if (game_version.value) {
-    if (loader.value === 'fabric') {
-      return fabric_versions.value.gameVersions[0].loaders.map((item) => item.id)
-    } else if (loader.value === 'forge') {
-      return forge_versions.value.gameVersions
-        .find((item) => item.id === game_version.value)
-        .loaders.map((item) => item.id)
-    } else if (loader.value === 'quilt') {
-      return quilt_versions.value.gameVersions[0].loaders.map((item) => item.id)
-    } else if (loader.value === 'neoforge') {
-      return neoforge_versions.value.gameVersions
-        .find((item) => item.id === game_version.value)
-        .loaders.map((item) => item.id)
-    }
+  if (!game_version.value) return []
+  if (loader.value === 'fabric') {
+    return fabric_versions.value?.gameVersions?.[0]?.loaders?.map((item) => item.id) ?? []
+  }
+  if (loader.value === 'forge') {
+    return forge_versions.value?.gameVersions?.find((item) => item.id === game_version.value)?.loaders?.map((item) => item.id) ?? []
+  }
+  if (loader.value === 'quilt') {
+    return quilt_versions.value?.gameVersions?.[0]?.loaders?.map((item) => item.id) ?? []
+  }
+  if (loader.value === 'neoforge') {
+    return neoforge_versions.value?.gameVersions?.find((item) => item.id === game_version.value)?.loaders?.map((item) => item.id) ?? []
   }
   return []
 })

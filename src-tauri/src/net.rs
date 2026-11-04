@@ -10,7 +10,6 @@ use tokio::io::AsyncWriteExt;
 use crate::cache::MetadataCache;
 use crate::domain::ContentHash;
 use crate::error::LauncherError;
-use crate::hashutil::verify_bytes;
 use crate::protocol::{env_nonempty, force_https, USER_AGENT as APP_USER_AGENT};
 
 const MAX_ATTEMPTS: u32 = 3;
@@ -74,13 +73,32 @@ impl HttpPool {
         }
         // Always keep a direct hop last (TUN mode has no WinINet proxy).
         hops.push(ClientHop::Direct);
-        let client = build_client(&hops[0], connect, request)?;
+
+        // Build primary client with fallback - if first hop fails, try next
+        let mut primary_client = None;
         let mut alts = Vec::new();
-        for hop in hops.iter().skip(1) {
-            if let Ok(extra) = build_client(hop, connect, request) {
-                alts.push(extra);
+        for (idx, hop) in hops.iter().enumerate() {
+            match build_client(hop, connect, request) {
+                Ok(client) => {
+                    if primary_client.is_none() {
+                        primary_client = Some(client);
+                    } else {
+                        alts.push(client);
+                    }
+                }
+                Err(err) => {
+                    log::warn!("Failed to build HTTP client for hop {}: {}", idx, err);
+                    // Continue to next hop
+                }
             }
         }
+
+        let client = primary_client.ok_or_else(|| {
+            LauncherError::Message(
+                "Failed to create any HTTP client - all proxy hops failed".into(),
+            )
+        })?;
+
         log::info!(
             "http pool hops={} (connect={}ms) preferred={:?} proxies={:?}",
             1 + alts.len(),
@@ -103,7 +121,10 @@ impl HttpPool {
         let candidates = usable_candidates(alternate_urls(url, extra_headers));
         if candidates.len() <= 1 {
             return self
-                .get_text_once(candidates.first().map(String::as_str).unwrap_or(url), extra_headers)
+                .get_text_once(
+                    candidates.first().map(String::as_str).unwrap_or(url),
+                    extra_headers,
+                )
                 .await;
         }
         self.first_catalog_success(candidates, extra_headers).await
@@ -183,9 +204,9 @@ impl HttpPool {
                 }
             }
         }
-        Err(connect.or(other).unwrap_or_else(|| {
-            LauncherError::Message("catalog hosts did not answer".into())
-        }))
+        Err(connect
+            .or(other)
+            .unwrap_or_else(|| LauncherError::Message("catalog hosts did not answer".into())))
     }
 
     async fn get_text_once(
@@ -230,9 +251,10 @@ impl HttpPool {
 
     pub async fn get_bytes(&self, url: &str) -> Result<Vec<u8>, LauncherError> {
         let mut last = None;
-        for candidate in with_sticky_host(with_demoted_mirror(usable_candidates(
-            alternate_urls(url, &[]),
-        ))) {
+        for candidate in with_sticky_host(with_demoted_mirror(usable_candidates(alternate_urls(
+            url,
+            &[],
+        )))) {
             match self.get_bytes_once(&candidate).await {
                 Ok(bytes) => {
                     remember_sticky_host(&candidate);
@@ -326,7 +348,9 @@ impl HttpPool {
         for client in self.clients() {
             match dispatch_post(client, url, &body, true).await {
                 Ok(value) => return Ok(value),
-                Err(err) if err.should_try_mirror() || matches!(err, LauncherError::Network { .. }) => {
+                Err(err)
+                    if err.should_try_mirror() || matches!(err, LauncherError::Network { .. }) =>
+                {
                     last = Some(err);
                 }
                 Err(err) => return Err(err),
@@ -335,18 +359,32 @@ impl HttpPool {
         Err(last.unwrap_or_else(|| LauncherError::Message(format!("POST failed: {url}"))))
     }
 
+    /// POST JSON sequentially across hops because OAuth grants and codes may be single-use.
     pub async fn post_json<T: serde::de::DeserializeOwned>(
         &self,
         url: &str,
         body: &impl serde::Serialize,
     ) -> Result<T, LauncherError> {
-        let payload = serde_json::to_value(body).map_err(|err| LauncherError::Message(err.to_string()))?;
-        let value = self
-            .post_across_hops(url, PostBody::Json(payload), false)
-            .await?;
-        serde_json::from_value(value).map_err(|err| LauncherError::Auth {
-            reason: format!("bad JSON from {url}: {err}"),
-        })
+        let payload =
+            serde_json::to_value(body).map_err(|err| LauncherError::Message(err.to_string()))?;
+        let body = PostBody::Json(payload);
+        let mut last = None;
+        for client in self.clients() {
+            match dispatch_post(client, url, &body, false).await {
+                Ok(value) => {
+                    return serde_json::from_value(value).map_err(|err| LauncherError::Auth {
+                        reason: format!("bad JSON from {url}: {err}"),
+                    })
+                }
+                Err(err)
+                    if err.should_try_mirror() || matches!(err, LauncherError::Network { .. }) =>
+                {
+                    last = Some(err)
+                }
+                Err(err) => return Err(err),
+            }
+        }
+        Err(last.unwrap_or_else(|| LauncherError::Message(format!("POST failed: {url}"))))
     }
 
     /// Rebuild clients so a VPN toggled after startup is picked up (WinINet / local SOCKS).
@@ -393,14 +431,25 @@ impl HttpPool {
                 body: trim_body(&body),
             });
         }
-        let bytes = response
-            .bytes()
+        let partial = partial_path(dest);
+        let mut stream = response.bytes_stream();
+        let mut file = tokio::fs::File::create(&partial)
             .await
-            .map_err(|source| LauncherError::Network {
+            .map_err(|err| crate::error::io_at(&partial, err))?;
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|source| LauncherError::Network {
                 url: url.to_string(),
                 source,
             })?;
-        tokio::fs::write(dest, &bytes)
+            file.write_all(&chunk)
+                .await
+                .map_err(|err| crate::error::io_at(&partial, err))?;
+        }
+        file.flush()
+            .await
+            .map_err(|err| crate::error::io_at(&partial, err))?;
+        drop(file);
+        tokio::fs::rename(&partial, dest)
             .await
             .map_err(|err| crate::error::io_at(dest, err))?;
         Ok(())
@@ -490,7 +539,6 @@ impl HttpPool {
             .await
             .map_err(|err| crate::error::io_at(partial, err))?;
         let mut received = 0u64;
-        let mut payload = Vec::new();
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(|source| LauncherError::Network {
                 url: url.to_string(),
@@ -500,7 +548,6 @@ impl HttpPool {
             file.write_all(&chunk)
                 .await
                 .map_err(|err| crate::error::io_at(partial, err))?;
-            payload.extend_from_slice(&chunk);
         }
         file.flush()
             .await
@@ -515,7 +562,9 @@ impl HttpPool {
                 });
             }
         }
-        verify_bytes(&payload, expected, &partial.display().to_string())?;
+        // Hash the completed file from disk instead of buffering the entire download.
+        // Large server jars, runtimes and modpacks must not consume equivalent RAM.
+        crate::hashutil::verify_file(partial, expected)?;
         Ok(())
     }
 
@@ -637,7 +686,9 @@ impl HttpPool {
         while let Some(item) = pending.next().await {
             match item {
                 Ok(value) => return Ok(value),
-                Err(err) if err.should_try_mirror() || matches!(err, LauncherError::Network { .. }) => {
+                Err(err)
+                    if err.should_try_mirror() || matches!(err, LauncherError::Network { .. }) =>
+                {
                     last = Some(err);
                 }
                 Err(err) => {
@@ -669,15 +720,21 @@ async fn dispatch_post(
         PostBody::Form(form) => client.post(url).form(form),
         PostBody::Json(json) => client.post(url).json(json),
     };
-    let response = request.send().await.map_err(|source| LauncherError::Network {
-        url: url.to_string(),
-        source,
-    })?;
+    let response = request
+        .send()
+        .await
+        .map_err(|source| LauncherError::Network {
+            url: url.to_string(),
+            source,
+        })?;
     let status = response.status();
-    let text = response.text().await.map_err(|source| LauncherError::Network {
-        url: url.to_string(),
-        source,
-    })?;
+    let text = response
+        .text()
+        .await
+        .map_err(|source| LauncherError::Network {
+            url: url.to_string(),
+            source,
+        })?;
     if !status.is_success() && !allow_error_body {
         return Err(LauncherError::Auth {
             reason: format!("HTTP {} from {url}: {}", status.as_u16(), trim_body(&text)),
@@ -818,13 +875,20 @@ fn has_curseforge_key(extra_headers: &[(&str, &str)]) -> bool {
 }
 
 fn env_proxy_is_set() -> bool {
-    ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"]
-        .iter()
-        .any(|name| {
-            std::env::var(name)
-                .map(|value| !value.trim().is_empty())
-                .unwrap_or(false)
-        })
+    [
+        "HTTPS_PROXY",
+        "https_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+    ]
+    .iter()
+    .any(|name| {
+        std::env::var(name)
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false)
+    })
 }
 
 fn preferred_proxy_urls() -> Vec<String> {
@@ -1025,6 +1089,11 @@ const MODRINTH_API_PREFIXES: &[&str] = &[
     "https://mod.mcimirror.top/modrinth",
     "https://api.modrinth.com",
     "https://staging-api.modrinth.com",
+    "https://modrinth-mirror.sk1er.club",
+    "https://mirror.modrinth.com",
+    "https://modrinth.mirror.sustech.edu.cn",
+    "https://modrinth.mirror.sjtu.edu.cn",
+    "https://mirror.github.com/modrinth", // GitHub mirror for China
 ];
 
 const CURSEFORGE_API_PREFIXES: &[&str] = &[
@@ -1033,12 +1102,13 @@ const CURSEFORGE_API_PREFIXES: &[&str] = &[
     "https://api.curseforge.com/v1",
     "https://cfproxy.fly.dev/v1",
     "https://mod.mcimirror.top/curseforge/v1",
+    // Additional RF-friendly mirrors
+    "https://curseforge.mirrors.sustech.edu.cn/api/v1",
+    "https://cf.mirrors.sjtug.sjtu.edu.cn/v1",
 ];
 
-const MODRINTH_CDN_PREFIXES: &[&str] = &[
-    "https://cdn.modrinth.com",
-    "https://cdn-alt.modrinth.com",
-];
+const MODRINTH_CDN_PREFIXES: &[&str] =
+    &["https://cdn.modrinth.com", "https://cdn-alt.modrinth.com"];
 
 const MILLIDA_FILE_HOSTS: &[&str] = &[
     "cdn.modrinth.com",
@@ -1052,6 +1122,7 @@ const MILLIDA_FILE_HOSTS: &[&str] = &[
     "files.minecraftforge.net",
     "maven.minecraftforge.net",
     "maven.neoforged.net",
+    "fill.papermc.io",
     "api.adoptium.net",
     "api.azul.com",
     "cdn.azul.com",
@@ -1066,8 +1137,12 @@ const MILLIDA_FILE_HOSTS: &[&str] = &[
     "minotar.net",
     "crafthead.net",
     "visage.surgeplay.com",
-    "sessionserver.mojang.com",
     "textures.minecraft.net",
+    // Additional RF mirrors for file downloads
+    "bmclapi2.bangbang93.com",
+    "mcapi.sk1er.club",
+    "download.mcbbs.net",
+    "maven.mcbbs.net",
 ];
 
 #[derive(Default, serde::Serialize, serde::Deserialize)]
@@ -1150,7 +1225,12 @@ fn millida_file_proxy(url: &str) -> Option<String> {
     }
     let host = parsed.host_str()?.to_ascii_lowercase();
     let allowed = MILLIDA_FILE_HOSTS.iter().any(|item| *item == host)
-        || (host == "github.com" && parsed.path().starts_with("/adoptium/"));
+        || (host == "github.com" && parsed.path().starts_with("/adoptium/"))
+        || (host == "objects.githubusercontent.com")
+        || (host == "release-assets.githubusercontent.com")
+        || (host == "github-releases.githubusercontent.com")
+        || (host == "api.github.com")
+        || (host == "raw.githubusercontent.com");
     if !allowed {
         return None;
     }
@@ -1205,10 +1285,12 @@ fn demote_family_of(url: &str) {
 }
 
 fn catalog_uses_millida() -> bool {
-    net_memory()
-        .lock()
-        .ok()
-        .is_some_and(|memory| memory.sticky.values().any(|host| host.contains("millida.net")))
+    net_memory().lock().ok().is_some_and(|memory| {
+        memory
+            .sticky
+            .values()
+            .any(|host| host.contains("millida.net"))
+    })
 }
 
 fn with_demoted_mirror(mut candidates: Vec<String>) -> Vec<String> {
@@ -1223,7 +1305,10 @@ fn with_demoted_mirror(mut candidates: Vec<String>) -> Vec<String> {
     if !demoted && !catalog_uses_millida() {
         return candidates;
     }
-    if let Some(index) = candidates.iter().position(|item| is_millida_proxy_url(item)) {
+    if let Some(index) = candidates
+        .iter()
+        .position(|item| is_millida_proxy_url(item))
+    {
         let winner = candidates.remove(index);
         candidates.insert(0, winner);
     }
@@ -1267,7 +1352,11 @@ fn with_sticky_host(mut candidates: Vec<String>) -> Vec<String> {
     if let Some(index) = candidates.iter().position(|item| {
         reqwest::Url::parse(item)
             .ok()
-            .and_then(|parsed| parsed.host_str().map(|value| value.eq_ignore_ascii_case(&host)))
+            .and_then(|parsed| {
+                parsed
+                    .host_str()
+                    .map(|value| value.eq_ignore_ascii_case(&host))
+            })
             .unwrap_or(false)
     }) {
         let winner = candidates.remove(index);
@@ -1319,16 +1408,33 @@ fn usable_candidates(candidates: Vec<String>) -> Vec<String> {
 }
 
 fn expand_from_prefixes(url: &str, prefixes: &[&str], extras: &[String]) -> Option<Vec<String>> {
-    let rest = prefixes.iter().find_map(|prefix| url.strip_prefix(*prefix))?;
+    let rest = prefixes
+        .iter()
+        .find_map(|prefix| url.strip_prefix(*prefix))?;
     let mut out = Vec::new();
-    for prefix in extras.iter().map(String::as_str).chain(prefixes.iter().copied()) {
+    for prefix in extras
+        .iter()
+        .map(String::as_str)
+        .chain(prefixes.iter().copied())
+    {
         let trimmed = prefix.trim().trim_end_matches('/');
         if trimmed.is_empty() {
             continue;
         }
         push_unique(&mut out, format!("{trimmed}{rest}"));
     }
-    Some(out)
+    if !out.is_empty() {
+        // Remove consecutive duplicates while preserving order
+        let mut dedup = Vec::new();
+        for url in out {
+            if !dedup.iter().any(|existing: &String| *existing == url) {
+                dedup.push(url);
+            }
+        }
+        Some(dedup)
+    } else {
+        None
+    }
 }
 
 fn is_connect_like(err: &LauncherError) -> bool {
@@ -1419,8 +1525,30 @@ fn alternate_urls(url: &str, extra_headers: &[(&str, &str)]) -> Vec<String> {
     if url.contains("github.com") || url.contains("githubusercontent.com") {
         push_unique(&mut out, format!("https://ghfast.top/{url}"));
         push_unique(&mut out, format!("https://gh-proxy.com/{url}"));
+        push_unique(&mut out, format!("https://gh.api.99988866.xyz/{url}"));
+        push_unique(&mut out, format!("https://gh.ddlc.top/{url}"));
         if let Some(rest) = url.strip_prefix("https://github.com") {
             push_unique(&mut out, format!("https://kkgithub.com{rest}"));
+            push_unique(&mut out, format!("https://hub.fastgit.xyz{rest}"));
+            push_unique(&mut out, format!("https://hub.gitmirror.com{rest}"));
+            push_unique(&mut out, format!("https://hub.mirror.red{rest}"));
+        }
+        if let Some(rest) = url.strip_prefix("https://raw.githubusercontent.com") {
+            push_unique(&mut out, format!("https://raw.fastgit.org{rest}"));
+            push_unique(&mut out, format!("https://raw.githubmirror.com{rest}"));
+            push_unique(&mut out, format!("https://raw.gitmirror.com{rest}"));
+        }
+        if let Some(rest) = url.strip_prefix("https://objects.githubusercontent.com") {
+            push_unique(
+                &mut out,
+                format!("https://objects.githubusercontent.com{rest}"),
+            );
+        }
+        if let Some(rest) = url.strip_prefix("https://release-assets.githubusercontent.com") {
+            push_unique(
+                &mut out,
+                format!("https://release-assets.githubusercontent.com{rest}"),
+            );
         }
     }
     if let Some(proxied) = millida_file_proxy(&url) {
@@ -1554,9 +1682,9 @@ mod tests {
         let fabric = "https://meta.fabricmc.net/v2/versions/loader";
         let order = alternate_urls(fabric, &[]);
         assert!(order.iter().any(|item| item.starts_with(fabric)));
-        assert!(order.iter().any(|item| item.starts_with(
-            "https://api.millida.net/v2/launcher/dl?url="
-        )));
+        assert!(order
+            .iter()
+            .any(|item| item.starts_with("https://api.millida.net/v2/launcher/dl?url=")));
         let session = "https://sessionserver.mojang.com/session/minecraft/profile/x";
         assert_eq!(alternate_urls(session, &[]), vec![session.to_string()]);
         let evil = "https://evil.example/cdn.modrinth.com/x.jar";
@@ -1582,7 +1710,9 @@ mod tests {
         assert!(order
             .iter()
             .any(|item| item.starts_with("https://cdn-alt.modrinth.com/")));
-        assert!(order.iter().any(|item| item.contains("api.millida.net/v2/launcher/dl?url=")));
+        assert!(order
+            .iter()
+            .any(|item| item.contains("api.millida.net/v2/launcher/dl?url=")));
     }
 
     #[test]
@@ -1653,5 +1783,25 @@ mod tests {
             curse.contains("data") || curse.contains("id"),
             "unexpected curseforge payload"
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "hits live api.minecraftservices.com (blocked on RU)"]
+    async fn live_minecraftservices_via_auth_pool() {
+        let http = HttpPool::for_auth().expect("auth http client");
+        let result = http
+            .get_json::<serde_json::Value>("https://api.minecraftservices.com/entitlements/mcstore", &[])
+            .await;
+        // Must NOT be a connect/network error: RU SNI block must be bypassed
+        // by the local SOCKS hop. 401/403 (Provider) means we reached Mojang.
+        match result {
+            Err(LauncherError::Network { .. })
+            | Err(LauncherError::NetworkInterrupted { .. }) => {
+                panic!("api.minecraftservices.com unreachable through auth hop chain");
+            }
+            other => {
+                println!("minecraftservices responded: {other:?}");
+            }
+        }
     }
 }

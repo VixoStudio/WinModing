@@ -131,6 +131,16 @@ export default new createRouter({
           },
         },
         {
+          path: 'servers',
+          name: 'InstanceServers',
+          component: Pages.Servers,
+          props: true,
+          meta: {
+            useRootContext: true,
+            breadcrumb: [{ name: '?Instance', link: '/instance/{id}/' }, { name: 'Servers' }],
+          },
+        },
+        {
           path: 'options',
           name: 'Options',
           component: Instance.Options,

@@ -10,15 +10,15 @@
         />
         <div class="instance-info">
           <h2 class="name">{{ instance.name }}</h2>
-          <span class="metadata"> {{ instance.loader }} {{ instance.game_version }} </span>
+          <span class="metadata">{{ instance.native_client ? i18n(`create.client.${instance.native_client}`) : `${instance.loader} ${instance.game_version}` }}</span>
           <span v-if="playtimeLabel" class="metadata playtime">{{ playtimeLabel }}</span>
         </div>
         <span class="button-group">
-          <Button v-if="instance.install_stage !== 'installed'" disabled class="instance-button">
+          <Button v-if="instance.install_stage !== 'installed' && !instance.native_client" disabled class="instance-button">
             {{ i18n('instance.installing') }}
           </Button>
           <Button
-            v-else-if="playing === true"
+            v-else-if="playing === true || nativeRunning"
             color="danger"
             class="instance-button"
             @click="stopInstance('InstancePage')"
@@ -27,7 +27,7 @@
             {{ i18n('instance.stop') }}
           </Button>
           <Button
-            v-else-if="playing === false && loading === false"
+            v-else-if="(playing === false && loading === false) || instance.native_client"
             color="primary"
             class="instance-button"
             @click="startInstance('InstancePage')"
@@ -61,6 +61,10 @@
             <FileIcon />
             {{ i18n('instance.logs') }}
           </RouterLink>
+          <RouterLink :to="`/instance/${encodeURIComponent($route.params.id)}/servers`" class="btn">
+            <ServerIcon />
+            {{ i18n('instance.servers') }}
+          </RouterLink>
           <RouterLink :to="`/instance/${encodeURIComponent($route.params.id)}/options`" class="btn">
             <SettingsIcon />
             {{ i18n('instance.options') }}
@@ -91,30 +95,31 @@
     </div>
   </div>
   <ContextMenu ref="options" @option-clicked="handleOptionsClick">
-    <template #play> <PlayIcon /> Play </template>
-    <template #stop> <StopCircleIcon /> Stop </template>
-    <template #add_content> <PlusIcon /> Add Content </template>
-    <template #edit> <EditIcon /> Edit </template>
-    <template #copy_path> <ClipboardCopyIcon /> Copy Path </template>
-    <template #open_folder> <ClipboardCopyIcon /> Open Folder </template>
-    <template #copy_link> <ClipboardCopyIcon /> Copy Link </template>
-    <template #open_link> <ClipboardCopyIcon /> Open project page <ExternalIcon /> </template>
-    <template #copy_names><EditIcon />Copy names</template>
-    <template #copy_slugs><HashIcon />Copy slugs</template>
-    <template #copy_links><GlobeIcon />Copy Links</template>
-    <template #toggle><EditIcon />Toggle selected</template>
-    <template #disable><XIcon />Disable selected</template>
-    <template #enable><CheckCircleIcon />Enable selected</template>
-    <template #hide_show><EyeIcon />Show/Hide unselected</template>
+    <template #play> <PlayIcon /> {{ i18n('instance.contextPlay') }} </template>
+    <template #stop> <StopCircleIcon /> {{ i18n('instance.contextStop') }} </template>
+    <template #add_content> <PlusIcon /> {{ i18n('instance.contextAddContent') }} </template>
+    <template #edit> <EditIcon /> {{ i18n('instance.contextEdit') }} </template>
+    <template #copy_path> <ClipboardCopyIcon /> {{ i18n('instance.contextCopyPath') }} </template>
+    <template #open_folder> <ClipboardCopyIcon /> {{ i18n('instance.contextOpenFolder') }} </template>
+    <template #copy_link> <ClipboardCopyIcon /> {{ i18n('instance.contextCopyLink') }} </template>
+    <template #open_link> <ClipboardCopyIcon /> {{ i18n('instance.contextOpenProject') }} <ExternalIcon /> </template>
+    <template #copy_names><EditIcon />{{ i18n('instance.contextCopyNames') }}</template>
+    <template #copy_slugs><HashIcon />{{ i18n('instance.contextCopySlugs') }}</template>
+    <template #copy_links><GlobeIcon />{{ i18n('instance.contextCopyLinks') }}</template>
+    <template #toggle><EditIcon />{{ i18n('instance.contextToggleSelected') }}</template>
+    <template #disable><XIcon />{{ i18n('instance.contextDisableSelected') }}</template>
+    <template #enable><CheckCircleIcon />{{ i18n('instance.contextEnableSelected') }}</template>
+    <template #hide_show><EyeIcon />{{ i18n('instance.contextShowHide') }}</template>
     <template #update_all
-      ><UpdatedIcon />Update {{ selected.length > 0 ? 'selected' : 'all' }}</template
+      ><UpdatedIcon />{{ i18n('instance.contextUpdateSelected', { count: selected.length > 0 ? i18n('instance.contextSelected') : i18n('instance.contextAll') }) }}</template
     >
-    <template #filter_update><UpdatedIcon />Select Updatable</template>
+    <template #filter_update><UpdatedIcon />{{ i18n('instance.contextSelectUpdatable') }}</template>
   </ContextMenu>
 </template>
 <script setup>
 import { Button, Avatar, Card } from '@modrinth/ui'
 import SlideRail from '@/components/ui/SlideRail.vue'
+import { ServerIcon } from '@/assets/icons'
 import {
   BoxIcon,
   SettingsIcon,
@@ -133,6 +138,7 @@ import {
   CheckCircleIcon,
   UpdatedIcon,
 } from '@modrinth/assets'
+import { invoke } from '@tauri-apps/api/core'
 import { get, kill, run } from '@/helpers/profile'
 import { get_by_profile_path } from '@/helpers/process'
 import { process_listener, profile_listener } from '@/helpers/events'
@@ -208,6 +214,8 @@ const loadingBar = useLoading()
 
 const playing = ref(false)
 const loading = ref(false)
+const nativeRunning = ref(false)
+let nativeChildId = null
 const options = ref(null)
 const selected = ref([])
 const childError = ref('')
@@ -244,17 +252,30 @@ onErrorCaptured((err) => {
 const startInstance = async (context, server) => {
   loading.value = true
   try {
+    if (instance.value.native_client) {
+      nativeChildId = await run(route.params.id, server || null)
+      nativeRunning.value = true
+      const waitForExit = async () => {
+        if (!nativeChildId) return
+        const exited = await invoke('native_client_exited', { pid: nativeChildId }).catch(() => true)
+        if (exited) { nativeRunning.value = false; nativeChildId = null }
+        else window.setTimeout(waitForExit, 1000)
+      }
+      window.setTimeout(waitForExit, 1000)
+      return
+    }
     await run(route.params.id, server || null)
     playing.value = true
   } catch (err) {
     handleSevereError(err, { profilePath: route.params.id })
+  } finally {
+    loading.value = false
   }
-  loading.value = false
 }
 
 const checkProcess = async () => {
+  if (instance.value.native_client) return
   const runningProcesses = await get_by_profile_path(route.params.id).catch(handleError)
-
   playing.value = runningProcesses.length > 0
 }
 
@@ -279,6 +300,12 @@ if (!offline.value && instance.value.linked_data && instance.value.linked_data.p
 await checkProcess()
 
 const stopInstance = async (context) => {
+  if (instance.value.native_client) {
+    if (nativeChildId) await invoke('native_client_kill', { pid: nativeChildId }).catch(handleError)
+    nativeChildId = null
+    nativeRunning.value = false
+    return
+  }
   playing.value = false
   await kill(route.params.id).catch(handleError)
 }

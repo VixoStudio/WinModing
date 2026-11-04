@@ -21,6 +21,7 @@ import {
   launcherUrl,
   latestBetaCommitLink,
   latestBetaCommitTruncatedSha,
+  remoteVersion,
 } from '@/helpers/update.js'
 import { version } from '../../package.json'
 
@@ -552,7 +553,7 @@ await getBranches()
 
           <span class="label__description"
             >Version on remote server • 
-            <p id="releaseData" class="cosmic inline-fix"></p>
+            <p id="releaseData" class="cosmic inline-fix">{{ remoteVersion || "—" }}</p>
           </span>
           <span class="label__description"
             >Version on local device • 

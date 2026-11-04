@@ -82,6 +82,10 @@ impl AppPaths {
         self.root.join("downloads")
     }
 
+    pub fn native_clients_dir(&self) -> PathBuf {
+        self.root.join("native-clients")
+    }
+
     pub fn version_json(&self, version_id: &str) -> PathBuf {
         self.versions
             .join(version_id)

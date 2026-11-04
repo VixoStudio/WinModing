@@ -443,11 +443,7 @@ pub async fn login_microsoft_official(
                 reason: "Microsoft login timed out".into(),
             });
         }
-        if let Some(outcome) = result_slot
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take()
-        {
+        if let Some(outcome) = result_slot.lock().unwrap_or_else(|e| e.into_inner()).take() {
             let _ = window.close();
             break outcome.map_err(|reason| LauncherError::Auth { reason })?;
         }

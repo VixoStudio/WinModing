@@ -58,7 +58,7 @@
             your files, so you should always make copies of them and keep them in a safe place.
           </p>
         </div>
-        <span>Version on remote server • <p id="releaseData" class="cosmic inline-fix"></p></span>
+        <span>Version on remote server • <p id="releaseData" class="cosmic inline-fix">{{ remoteVersion || "—" }}</p></span>
         <span>Version on local device •
           <p class="cosmic inline-fix">v{{ version }}</p>
         </span>
@@ -116,7 +116,7 @@ import { get_many } from '@/helpers/profile.js'
 import { version } from '../../../package.json'
 import { useI18n } from '@/helpers/i18n.js'
 
-import { installState, getRemote, updateState } from '@/helpers/update.js'
+import { installState, getRemote, updateState, remoteVersion } from '@/helpers/update.js'
 import ModalWrapper from './modal/ModalWrapper.vue'
 
 const { t: i18n } = useI18n()

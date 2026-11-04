@@ -12,7 +12,6 @@ import {
   MaximizeIcon,
   RestoreIcon,
   UserIcon,
-  ServerIcon,
 } from '@modrinth/assets'
 import { Button, Notifications } from '@modrinth/ui'
 import { useLoading, useTheming } from '@/store/state'
@@ -290,9 +289,6 @@ async function handleCommand(e) {
           <RouterLink v-tooltip="i18n('nav.skins')" to="/skins" class="btn icon-only collapsed-button">
             <UserIcon />
           </RouterLink>
-          <RouterLink v-tooltip="i18n('nav.servers')" to="/servers" class="btn icon-only collapsed-button">
-            <ServerIcon />
-          </RouterLink>
           <Suspense>
             <QuickInstanceSwitcher />
           </Suspense>
@@ -306,8 +302,7 @@ async function handleCommand(e) {
           v-tooltip="i18n('nav.create')"
           class="sleek-primary collapsed-button"
           icon-only
-          :disabled="offline"
-          @click="() => $refs.installationModal.show()"
+          @click="() => $refs.installationModal?.show()"
         >
           <PlusIcon />
         </Button>

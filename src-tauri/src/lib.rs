@@ -14,16 +14,18 @@ mod discord;
 mod domain;
 mod error;
 mod facegen;
-mod server_ping;
-mod servers_catalog;
 mod hashutil;
 mod java;
 mod launch;
 mod logs;
+mod native_clients;
 mod net;
 mod paths;
 mod protocol;
 mod providers;
+mod server_ping;
+mod servers;
+mod servers_catalog;
 mod settings;
 mod skins;
 mod state;
@@ -66,6 +68,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::drag_window,
             commands::open_external,
+            commands::install_launcher_update,
             commands::search_catalog,
             commands::catalog_get_json,
             commands::get_catalog_version,
@@ -128,6 +131,19 @@ pub fn run() {
             commands::proxy_media,
             commands::server_status,
             commands::list_recommended_servers,
+            commands::list_local_servers,
+            commands::save_local_server,
+            commands::delete_local_server,
+            commands::install_local_server,
+            commands::start_local_server,
+            commands::stop_local_server,
+            commands::local_server_running,
+            commands::save_native_client_profile,
+            commands::native_client_latest,
+            commands::install_native_client,
+            commands::launch_native_client,
+            commands::native_client_exited,
+            commands::native_client_kill,
             commands::list_skins,
             commands::save_skin,
             commands::delete_skin,

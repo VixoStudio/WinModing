@@ -46,7 +46,7 @@ onUnmounted(() => {
   <div class="library-page">
     <header class="library-head">
       <h1>{{ i18n('nav.library') }}</h1>
-      <Button color="primary" :disabled="offline" @click="installationModal?.show()">
+      <Button color="primary" @click="installationModal?.show()">
         <PlusIcon />
         {{ i18n('library.create') }}
       </Button>
@@ -63,7 +63,7 @@ onUnmounted(() => {
         <NewInstanceImage />
       </div>
       <h3>{{ i18n('library.empty') }}</h3>
-      <Button color="primary" :disabled="offline" @click="installationModal?.show()">
+      <Button color="primary" @click="installationModal?.show()">
         <PlusIcon />
         {{ i18n('library.create') }}
       </Button>

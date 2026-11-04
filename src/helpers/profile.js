@@ -29,11 +29,14 @@ export function normalizePlayedAt(value) {
 export function toProfile(record, extra = {}) {
   const createdUnix = record.createdUnix ?? record.created_unix ?? 0;
   const created = normalizePlayedAt(createdUnix) || new Date().toISOString();
+  const loader = loaderName(record.loader)
+  const nativeClient = ['pomme', 'horizon', 'win'].includes(loader) ? 'win' : null
   return {
     path: record.id,
     name: extra.name || record.name,
     game_version: record.gameVersion ?? record.game_version,
-    loader: loaderName(record.loader),
+    loader: nativeClient ? 'win' : loader,
+    native_client: nativeClient,
     loader_version: record.loaderVersion ?? record.loader_version ?? null,
     java_major: record.javaMajor ?? record.java_major ?? null,
     install_stage: record.installStage ?? record.install_stage ?? "installed",
@@ -59,6 +62,7 @@ export function toProfile(record, extra = {}) {
     game_resolution: extra.gameResolution ?? extra.game_resolution ?? undefined,
     hooks: extra.hooks ?? { pre_launch: null, wrapper: null, post_exit: null },
     quick_servers: extra.quickServers ?? extra.quick_servers ?? [],
+    quickServers: extra.quickServers ?? extra.quick_servers ?? [],
   };
 }
 
@@ -276,6 +280,13 @@ export async function get_pack_export_candidates() {
 }
 
 export async function run(path, server) {
+  const profile = await get(path)
+  if (['pomme', 'horizon', 'win'].includes(String(profile?.native_client || '').toLowerCase())) {
+    return invoke('launch_native_client', {
+      client: 'win',
+      server: server || null,
+    })
+  }
   const accounts = await invoke("list_accounts");
   const stored =
     localStorage.getItem("winmoding.defaultUser");

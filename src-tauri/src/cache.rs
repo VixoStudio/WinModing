@@ -5,6 +5,7 @@ use rusqlite::{params, Connection};
 
 use crate::domain::{InstanceRecord, LoaderKind, StoredAccount};
 use crate::error::LauncherError;
+use crate::servers::{LocalServer, ServerKind};
 
 #[derive(Clone)]
 pub struct MetadataCache {
@@ -51,6 +52,17 @@ impl MetadataCache {
                 version_type TEXT NOT NULL,
                 json_path TEXT NOT NULL,
                 installed INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS local_servers (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                game_version TEXT NOT NULL,
+                build TEXT,
+                port INTEGER NOT NULL,
+                eula_accepted INTEGER NOT NULL DEFAULT 0,
+                jar_path TEXT,
+                created_unix INTEGER NOT NULL
             );
             ",
         )?;
@@ -212,7 +224,11 @@ impl MetadataCache {
     }
 
     /// Swap sort_order with the neighbour above (`up`) or below (`down`).
-    pub async fn move_instance(&self, id: &str, direction: &str) -> Result<Vec<InstanceRecord>, LauncherError> {
+    pub async fn move_instance(
+        &self,
+        id: &str,
+        direction: &str,
+    ) -> Result<Vec<InstanceRecord>, LauncherError> {
         let db = self.conn.clone();
         let id = id.to_string();
         let up = direction.eq_ignore_ascii_case("up");
@@ -359,6 +375,47 @@ impl MetadataCache {
         spawn_db(move || {
             let conn = lock_db(&db);
             conn.execute("DELETE FROM accounts WHERE id = ?1", params![id])?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn upsert_server(&self, server: LocalServer) -> Result<(), LauncherError> {
+        let db = self.conn.clone();
+        spawn_db(move || {
+            let conn = lock_db(&db);
+            conn.execute(
+                "INSERT INTO local_servers (id, name, kind, game_version, build, port, eula_accepted, jar_path, created_unix)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                 ON CONFLICT(id) DO UPDATE SET name=excluded.name, kind=excluded.kind, game_version=excluded.game_version,
+                 build=excluded.build, port=excluded.port, eula_accepted=excluded.eula_accepted, jar_path=excluded.jar_path",
+                params![server.id, server.name, server.kind.as_str(), server.game_version, server.build, server.port as i64,
+                    server.eula_accepted as i64, server.jar_path, server.created_unix],
+            )?;
+            Ok(())
+        }).await
+    }
+
+    pub async fn list_servers(&self) -> Result<Vec<LocalServer>, LauncherError> {
+        let db = self.conn.clone();
+        spawn_db(move || {
+            let conn = lock_db(&db);
+            let mut stmt = conn.prepare("SELECT id,name,kind,game_version,build,port,eula_accepted,jar_path,created_unix FROM local_servers ORDER BY created_unix DESC")?;
+            let rows = stmt.query_map([], |row| Ok(LocalServer {
+                id: row.get(0)?, name: row.get(1)?, kind: ServerKind::parse(&row.get::<_, String>(2)?),
+                game_version: row.get(3)?, build: row.get(4)?, port: row.get::<_, i64>(5)? as u16,
+                eula_accepted: row.get::<_, i64>(6)? != 0, jar_path: row.get(7)?, created_unix: row.get(8)?,
+            }))?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+        }).await
+    }
+
+    pub async fn delete_server(&self, id: &str) -> Result<(), LauncherError> {
+        let db = self.conn.clone();
+        let id = id.to_string();
+        spawn_db(move || {
+            let conn = lock_db(&db);
+            conn.execute("DELETE FROM local_servers WHERE id=?1", params![id])?;
             Ok(())
         })
         .await

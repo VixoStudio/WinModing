@@ -69,10 +69,7 @@ async fn read_varint(stream: &mut TcpStream) -> Result<i32, LauncherError> {
 fn split_host_port(address: &str) -> (String, u16) {
     let trimmed = address.trim();
     if let Some((host, port)) = trimmed.rsplit_once(':') {
-        if !host.is_empty()
-            && !host.contains(']')
-            && port.chars().all(|c| c.is_ascii_digit())
-        {
+        if !host.is_empty() && !host.contains(']') && port.chars().all(|c| c.is_ascii_digit()) {
             if let Ok(p) = port.parse::<u16>() {
                 return (host.to_string(), p);
             }
@@ -116,12 +113,7 @@ async fn lookup_minecraft_srv(host: &str) -> Option<(String, u16)> {
         .await
         .ok()?;
     // System / common public resolvers — first success wins.
-    let resolvers = [
-        "172.19.0.2:53",
-        "1.1.1.1:53",
-        "8.8.8.8:53",
-        "77.88.8.8:53",
-    ];
+    let resolvers = ["172.19.0.2:53", "1.1.1.1:53", "8.8.8.8:53", "77.88.8.8:53"];
     for resolver in resolvers {
         let _ = sock.connect(resolver).await.ok();
         if sock.send(&query).await.is_err() {
@@ -416,7 +408,10 @@ mod tests {
             split_host_port("play.example.com:25566"),
             ("play.example.com".into(), 25566)
         );
-        assert_eq!(split_host_port("hypixel.net"), ("hypixel.net".into(), 25565));
+        assert_eq!(
+            split_host_port("hypixel.net"),
+            ("hypixel.net".into(), 25565)
+        );
     }
 
     #[test]

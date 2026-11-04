@@ -293,7 +293,9 @@ async fn join_catalog_providers(
         let query = query.clone();
         tokio::spawn(async move {
             let _ = tx
-                .send(CatalogSide::Modrinth(search_relaxing(&provider, &query).await))
+                .send(CatalogSide::Modrinth(
+                    search_relaxing(&provider, &query).await,
+                ))
                 .await;
         });
     }
@@ -587,18 +589,12 @@ pub fn curseforge_search_url(query: &CatalogQuery) -> String {
         .filter(|v| !v.is_empty())
     {
         let encoded = serde_json::to_string(&[game]).unwrap_or_else(|_| format!("[\"{game}\"]"));
-        parts.push(format!(
-            "gameVersions={}",
-            urlencoding::encode(&encoded)
-        ));
+        parts.push(format!("gameVersions={}", urlencoding::encode(&encoded)));
     }
     if class_id == 6 || class_id == 4471 {
         if let Some(kind) = query.loader.as_deref().and_then(curseforge_loader_type) {
             let encoded = serde_json::to_string(&[kind]).unwrap_or_else(|_| format!("[{kind}]"));
-            parts.push(format!(
-                "modLoaderTypes={}",
-                urlencoding::encode(&encoded)
-            ));
+            parts.push(format!("modLoaderTypes={}", urlencoding::encode(&encoded)));
         }
     }
     format!("{CURSEFORGE_API}/mods/search?{}", parts.join("&"))

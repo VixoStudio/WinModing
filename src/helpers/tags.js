@@ -133,13 +133,13 @@ export async function get_loaders() {
 
 export async function get_game_versions() {
   try {
-    const versions = await invoke("list_game_versions");
-    return versions.map((item) => ({
+    const versions = await invoke("list_game_versions")
+    return (Array.isArray(versions) ? versions : []).map((item) => ({
       version: item.id,
       version_type: item.type ?? item.versionType ?? item.version_type ?? "release",
-    }));
+    }))
   } catch {
-    return [];
+    return []
   }
 }
 
