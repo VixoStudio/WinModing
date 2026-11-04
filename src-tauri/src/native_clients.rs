@@ -48,7 +48,7 @@ pub struct NativeClientRelease {
     pub binary_sha256: Option<String>,
 }
 
-const WIN_CLIENT_REPO: &str = "vithorixscom-debug/Win-Client";
+const WIN_CLIENT_REPO: &str = "VixoStudio/Win-Client";
 const WINDOWS_ASSET: &str = "win-client-windows-x64.zip";
 
 #[derive(Debug, Clone, Deserialize)]
