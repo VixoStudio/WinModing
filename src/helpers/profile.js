@@ -4,6 +4,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { t } from "@/helpers/i18n.js";
+import { offline_login } from "@/helpers/auth.js";
 
 function loaderName(loader) {
   if (!loader) return "vanilla";
@@ -293,7 +294,13 @@ export async function run(path, server) {
   let accountId =
     (stored && accounts.find((item) => item.id === stored)?.id) || accounts[0]?.id;
   if (!accountId) {
-    throw new Error(t("accounts.needSignIn"));
+    // No account selected — create a local offline profile on the fly.
+    const offlineName = prompt(t("accounts.offlinePrompt") || "Введите ник для оффлайн-аккаунта:");
+    if (!offlineName || !offlineName.trim()) {
+      throw new Error(t("accounts.needSignIn"));
+    }
+    const created = await offline_login(offlineName.trim());
+    accountId = created.id;
   }
   const receipt = await invoke("launch_game", {
     instanceId: path,

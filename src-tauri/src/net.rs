@@ -1523,6 +1523,10 @@ fn alternate_urls(url: &str, extra_headers: &[(&str, &str)]) -> Vec<String> {
         );
     }
     if url.contains("github.com") || url.contains("githubusercontent.com") {
+        // Millida relay first — RU-native, no rate limit, no third-party mirror flakiness.
+        if let Some(proxied) = millida_file_proxy(&url) {
+            push_unique(&mut out, proxied);
+        }
         push_unique(&mut out, format!("https://ghfast.top/{url}"));
         push_unique(&mut out, format!("https://gh-proxy.com/{url}"));
         push_unique(&mut out, format!("https://gh.api.99988866.xyz/{url}"));
