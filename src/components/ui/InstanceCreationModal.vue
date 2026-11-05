@@ -112,9 +112,19 @@
       <div v-if="clientType === 'win'" class="native-client-choice">
         <p>{{ i18n('create.clientHint') }}</p>
         <p>{{ i18n('create.clientSelected', { client: i18n('create.client.win') }) }}</p>
-        <p class="warning">{{ i18n('nativeClients.gameClientUnavailable') }}</p>
-        <Button color="primary" disabled>
-          <PlusIcon />{{ i18n('create.create') }}
+        <div class="input-row">
+          <p class="input-label">{{ i18n('create.name') }}</p>
+          <input
+            v-model="profile_name"
+            autocomplete="off"
+            class="text-input"
+            type="text"
+            maxlength="100"
+          />
+        </div>
+        <Button color="primary" :disabled="!profile_name.trim() || creating" @click="installNativeProfile()">
+          <PlusIcon v-if="!creating" />
+          {{ creating ? i18n('create.creating') : i18n('create.create') }}
         </Button>
       </div>
     </div>
