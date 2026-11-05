@@ -283,9 +283,28 @@ export async function get_pack_export_candidates() {
 export async function run(path, server) {
   const profile = await get(path)
   if (['pomme', 'horizon', 'win'].includes(String(profile?.native_client || '').toLowerCase())) {
+    // Pass the chosen account's identity so the client plays as that player
+    // instead of forcing its own Microsoft sign-in gate.
+    const accounts = await invoke("list_accounts").catch(() => []);
+    const stored = localStorage.getItem("winmoding.defaultUser");
+    const account =
+      (stored && accounts.find((item) => item.id === stored)) || accounts[0] || null;
+    let username = account?.username || null;
+    let uuid = account?.uuid || null;
+    if (!username) {
+      // No account selected — create a local offline profile on the fly.
+      const offlineName = prompt(t("accounts.offlinePrompt") || "Введите ник для оффлайн-аккаунта:");
+      if (offlineName && offlineName.trim()) {
+        const created = await offline_login(offlineName.trim());
+        username = created.username;
+        uuid = created.uuid;
+      }
+    }
     return invoke('launch_native_client', {
       client: 'win',
       server: server || null,
+      username: username || null,
+      uuid: uuid || null,
     })
   }
   const accounts = await invoke("list_accounts");

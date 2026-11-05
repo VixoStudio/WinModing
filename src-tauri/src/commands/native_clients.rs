@@ -119,6 +119,8 @@ pub async fn launch_native_client(
     state: State<'_, AppState>,
     client: String,
     server: Option<String>,
+    username: Option<String>,
+    uuid: Option<String>,
 ) -> Result<u32, LauncherError> {
     let release = native_clients::latest(&state.http, &state.paths, &client).await?;
     let path = release.installed_path.ok_or_else(|| {
@@ -140,6 +142,25 @@ pub async fn launch_native_client(
     if let Some(parent) = std::path::Path::new(&path).parent() {
         command.current_dir(parent);
     }
+    // A launcher account, when picked: the client then plays as that player
+    // without its own Microsoft sign-in gate.
+    if let Some(name) = username
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        command.arg("--username").arg(name);
+        if let Some(uuid) = uuid
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            command.arg("--uuid").arg(uuid);
+        }
+    }
+    // The launcher owns the client's files (installs and verifies them), so
+    // the client's own updater stays off: no double downloads on slow starts.
+    command.arg("--launch-token").arg("launcher");
     if let Some(address) = server
         .as_deref()
         .map(str::trim)
