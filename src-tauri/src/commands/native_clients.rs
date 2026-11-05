@@ -33,13 +33,13 @@ pub async fn save_native_client_profile(
     let installed_path = native_clients::install(&state.http, &state.paths, &client_name).await?;
     if !std::path::Path::new(&installed_path).is_file() {
         return Err(LauncherError::Message(
-            "Win client installation did not produce an executable".into(),
+            "Rust client installation did not produce an executable".into(),
         ));
     }
     if !native_clients::is_playable_client(std::path::Path::new(&installed_path)) {
         let _ = tokio::fs::remove_file(&installed_path).await;
         return Err(LauncherError::Message(
-            "The published Win download is not a playable Minecraft client. A real Win game client must be published before this profile can be created.".into(),
+            "The published Rust download is not a playable Minecraft client. A real Rust game client must be published before this profile can be created.".into(),
         ));
     }
     let installed = native_clients::latest(&state.http, &state.paths, &client_name).await?;
@@ -123,14 +123,14 @@ pub async fn launch_native_client(
     let release = native_clients::latest(&state.http, &state.paths, &client).await?;
     let path = release.installed_path.ok_or_else(|| {
         LauncherError::Message(
-            "A playable Win Minecraft client is not installed yet. Create the Win profile first."
+            "A playable Rust Minecraft client is not installed yet. Create the Rust profile first."
                 .into(),
         )
     })?;
     let expected_sha256 = release
         .binary_sha256
         .ok_or_else(|| LauncherError::CorruptVersion {
-            reason: "Win release manifest did not provide an executable checksum".into(),
+            reason: "Rust release manifest did not provide an executable checksum".into(),
         })?;
     native_clients::verify_installed_client_for_launch(
         std::path::Path::new(&path),
