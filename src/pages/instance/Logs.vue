@@ -273,7 +273,9 @@ const share = async () => {
       body: `content=${encodeURIComponent(logs.value[selectedLogIndex.value].stdout)}`,
     }).catch(handleError)
 
-    shareModal.value.show(url.url)
+    if (url?.url) {
+      shareModal.value.show(url.url)
+    }
   }
 }
 

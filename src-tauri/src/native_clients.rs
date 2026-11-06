@@ -293,6 +293,12 @@ fn validate_source_archive(
     Ok(())
 }
 
+/// Whether the installed executable matches the release manifest's hash,
+/// so launch can skip reinstalling (or trigger an update when it does not).
+pub fn installed_matches(path: &Path, expected_sha256: &str) -> bool {
+    cached_valid(path, expected_sha256)
+}
+
 pub fn verify_installed_client_for_launch(
     path: &Path,
     expected_sha256: &str,

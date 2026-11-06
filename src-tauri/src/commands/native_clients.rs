@@ -123,12 +123,15 @@ pub async fn launch_native_client(
     uuid: Option<String>,
 ) -> Result<u32, LauncherError> {
     let release = native_clients::latest(&state.http, &state.paths, &client).await?;
-    let path = release.installed_path.ok_or_else(|| {
-        LauncherError::Message(
-            "A playable Rust Minecraft client is not installed yet. Create the Rust profile first."
-                .into(),
-        )
-    })?;
+    // Auto-update on launch: when the installed executable no longer matches
+    // the release manifest (a newer Rust client was published), reinstall it
+    // instead of failing the launch with a hash mismatch.
+    let path = match release.installed_path.as_deref() {
+        Some(path) if release.binary_sha256.as_deref().is_some_and(|expected| {
+            native_clients::installed_matches(std::path::Path::new(path), expected)
+        }) => path.to_string(),
+        _ => native_clients::install(&state.http, &state.paths, &client).await?,
+    };
     let expected_sha256 = release
         .binary_sha256
         .ok_or_else(|| LauncherError::CorruptVersion {
